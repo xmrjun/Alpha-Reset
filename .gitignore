@@ -27,3 +27,6 @@ data/
 .vscode/
 .idea/
 .DS_Store
+
+# 数据库备份
+backups/
