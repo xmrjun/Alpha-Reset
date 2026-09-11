@@ -39,11 +39,11 @@
     "basisInterval": "15m",
     "poolScope": "observeGroups",
     "skipWhenInsufficientHistory": true,
-    "minCoverage": 0.8,
-    "$comment_minCoverage": "该档适龄 CA 中有价格数据的比例达到此值才计算 RPS；低于则整档留空。设为 1 等于要求全池无一缺失——实测上游约 55% 的 CA 无 K 线数据(status=unavailable)，那样会导致 RPS 恒为 null、A4 恒假、系统永不告警。",
+    "minCoverage": 0.75,
+    "$comment_minCoverage": "该档适龄 CA 中取到价格的比例达到此值才计算 RPS，否则整档留空。设为 1 等于要求全池无一缺失 —— 实测永远达不到，会让 A4 恒假、系统永不告警。取 0.75 的依据：实测被剔除样本的市值中位数只有入选者的 52%，即缺失集中在尾部；而剔除尾部会让头部 RPS 分值下降而非上升（分母变小、同名次占比变大），方向是保守的——只会漏报不会误报。",
     "minRanked": 2,
-    "maxStaleBars": 2,
-    "$comment_maxStaleBars": "RPS 端点允许落后的 15m 周期数。全池拉取约需 80 秒，先拉到的 CA 在统一评估时可能已跨周期；零容忍会把它们剔除出排名（实测 r16/r56 覆盖率因此仅 16%）。放宽会引入最多 N×15 分钟的端点偏差。",
+    "maxStaleBars": 4,
+    "$comment_maxStaleBars": "当前价允许偏离基准时刻的 15m 周期数。所有 CA 统一取同一基准时刻的价格（横向排名必须同基准），此值是容差。实测本轮池内：<=2 周期覆盖 79%、<=4 覆盖 82%、<=8 覆盖 85%。落后超过 30 分钟的币本就是长时间无人成交的，那个陈旧价正是它的最后成交价，纳入排名比剔除更真实。取 4（60 分钟）以跨过 minCoverage。",
     "$comment_minRanked": "参与排名的最少 CA 数，少于此值排名无统计意义",
     "periods": {
       "r16": {

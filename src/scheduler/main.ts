@@ -158,7 +158,12 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
       if (halted()) { snapshot.status = 'halted'; return report; }
       const round = Math.floor(now / (cfg.schedule.mainLoopMinutes * MINUTE_MS));
       for (const member of snapshot.members) {
-        if (!member.qualified) continue;
+        // 注意：不能只给 qualified 的拉 K 线。RPS 是相对排名，需求要求
+        // 「池子为观察组」，若只算通过 A1/A2 的子集，排名基准就变了。
+        // 当 K 线源要消耗二娃配额时这是个无奈取舍；改用 GeckoTerminal（免费）后
+        // 该约束已无必要 —— 少拉的那些适龄成员会直接拉低 RPS 覆盖率。
+        const klineFree = Boolean(opts.klineSource);
+        if (!member.qualified && !klineFree) continue;
         if (halted()) { snapshot.status = 'halted'; return report; }
         const refresh = cfg.schedule.klineRefresh;
         // 群聊里混入的残缺 EVM 地址查行情必然失败，却照样消耗配额 —— 本地直接跳过

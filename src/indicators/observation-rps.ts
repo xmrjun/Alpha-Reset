@@ -1,5 +1,5 @@
 import type { StrategyConfig } from '../config/strategy.js';
-import { HOUR_MS, INTERVAL_MS, RPS_KEYS, closedCandles, emptyScores, isFresh, type RpsKey, type RpsScores } from '../market.js';
+import { HOUR_MS, INTERVAL_MS, RPS_KEYS, closedCandles, emptyScores, type RpsKey, type RpsScores } from '../market.js';
 import type { DexSnapshot } from '../types.js';
 import type { RpsMember } from './pool-rps.js';
 import { rps } from './rps.js';
@@ -37,8 +37,11 @@ export function calculateObservationRps(members: ObservationRpsMember[], now: nu
     const prices = new Map<number, number>();
     for (const bar of closedCandles(member.candles60m, INTERVAL_MS['1h'], now)) prices.set(bar.openTime + INTERVAL_MS['1h'], bar.close);
     for (const bar of bars) prices.set(bar.openTime + INTERVAL_MS['15m'], bar.close);
-    return [member.ca, { prices, current: isFresh(bars, INTERVAL_MS['15m'], now, cfg.a4_rps.maxStaleBars) ? bars.at(-1)! : null }];
+    return [member.ca, { prices }];
   }));
+  // 所有 CA 的「当前价」对齐到同一收盘时刻，保证排名可比
+  const baseline = Math.floor(now / INTERVAL_MS['15m']) * INTERVAL_MS['15m'];
+  const staleToleranceMs = cfg.a4_rps.maxStaleBars * INTERVAL_MS['15m'];
   for (const key of RPS_KEYS) {
     const useDex = key === 'r96' && cfg.a4_rps.periods[key].hours * HOUR_MS === INTERVAL_MS['1d'];
     const changes = new Map<string, number>();
@@ -51,11 +54,16 @@ export function calculateObservationRps(members: ObservationRpsMember[], now: nu
         if (member.dexStatus === 'ok' && change != null && Number.isFinite(change)) changes.set(member.ca, change);
       } else {
         const data = history.get(member.ca)!;
-        // 端点超出 15m 线的 24h 覆盖范围时放宽到 1h 容差（此时只能取 1h 线的整点）
+        // 端点超出 15m 线的 24h 覆盖范围时放宽到 1h 容差（更早的端点只落在 1h 线的整点上）
         const span = cfg.a4_rps.periods[key].bars * INTERVAL_MS['15m'];
-        const price = priceAt(data.prices, target, span > INTERVAL_MS['1d'] ? INTERVAL_MS['1h'] : INTERVAL_MS['15m']);
-        if (data.current && price !== undefined && price > 0 && Number.isFinite(price) && Number.isFinite(data.current.close)) {
-          changes.set(member.ca, (data.current.close / price - 1) * 100);
+        const startPrice = priceAt(data.prices, target, span > INTERVAL_MS['1d'] ? INTERVAL_MS['1h'] : INTERVAL_MS['15m']);
+        // 当前价统一取同一基准时刻，而不是各 CA 各自的最后一根 ——
+        // RPS 是横向排名，端点时刻不一致会让涨幅失去可比性；
+        // 而全池拉取需数分钟，用「各自最后一根」还会把先拉到的成员判成过期而剔除。
+        const nowPrice = priceAt(data.prices, baseline, staleToleranceMs);
+        if (nowPrice !== undefined && startPrice !== undefined
+          && startPrice > 0 && Number.isFinite(startPrice) && Number.isFinite(nowPrice)) {
+          changes.set(member.ca, (nowPrice / startPrice - 1) * 100);
         }
       }
     }
