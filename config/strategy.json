@@ -97,6 +97,12 @@
     },
     "$comment": "主循环 30 分钟；klineRefresh 单位为轮数，7d 每 2 轮、30d 每 8 轮刷新一次"
   },
+  "kline": {
+    "source": "geckoterminal",
+    "requestsPerMinute": 20,
+    "bars15m": 1000,
+    "$comment": "K 线主源与速率。GeckoTerminal 免费档标称 30 req/min，实测稳态可持续，但短时间连续多轮会触发更长窗口的限制，故默认留余量到 20。bars15m=1000 是上游上限，约 10.5 天——这是 A3.1「30m 历史新高」能成立的前提（二娃只有 24 小时，恰好等于 48 根 30m，会让 A3.1 与 A3.2 塌缩）。30m/1h/4h 均由 15m 本地合成，故每个 CA 每轮只发一次请求。"
+  },
   "quota": {
     "dailyLimit": 10500,
     "degradeAtPercent": 85,

@@ -27,8 +27,11 @@ const ohlcvSchema = z.object({
   }),
 });
 
+export type GeckoErrorCode = 'GECKO_INPUT' | 'GECKO_HTTP' | 'GECKO_RATE_LIMIT'
+  | 'GECKO_VALIDATION' | 'GECKO_NETWORK';
+
 export class GeckoTerminalError extends Error {
-  constructor(message: string, readonly httpStatus?: number) {
+  constructor(readonly code: GeckoErrorCode, message: string, readonly httpStatus?: number) {
     super(message);
     this.name = 'GeckoTerminalError';
   }
@@ -37,12 +40,14 @@ export class GeckoTerminalError extends Error {
 export class GeckoTerminalClient {
   readonly #baseUrl: string;
   readonly #minGapMs: number;
+  readonly #retryBaseMs: number;
   #lastRequestAt = 0;
   #queue: Promise<unknown> = Promise.resolve();
 
-  constructor(opts: { baseUrl?: string; requestsPerMinute?: number } = {}) {
+  constructor(opts: { baseUrl?: string; requestsPerMinute?: number; retryBaseMs?: number } = {}) {
     this.#baseUrl = opts.baseUrl ?? 'https://api.geckoterminal.com';
     this.#minGapMs = Math.ceil(60_000 / Math.min(opts.requestsPerMinute ?? RATE_LIMIT_PER_MIN, RATE_LIMIT_PER_MIN));
+    this.#retryBaseMs = opts.retryBaseMs ?? 5_000;
   }
 
   async #throttle(): Promise<void> {
@@ -60,7 +65,7 @@ export class GeckoTerminalClient {
    * 每个 CA 一次请求，132 个 CA 约 4.4 分钟，远低于 30 分钟的轮询间隔。
    */
   async getCandles15m(network: string, pool: string, limit = MAX_BARS): Promise<Candle[]> {
-    if (!network.trim() || !pool.trim()) throw new GeckoTerminalError('网络或交易对为空');
+    if (!network.trim() || !pool.trim()) throw new GeckoTerminalError('GECKO_INPUT', '网络或交易对为空');
     await this.#throttle();
     const url = new URL(
       `/api/v2/networks/${encodeURIComponent(network)}/pools/${encodeURIComponent(pool)}/ohlcv/minute`,
@@ -68,12 +73,28 @@ export class GeckoTerminalClient {
     );
     url.searchParams.set('aggregate', '15');
     url.searchParams.set('limit', String(Math.min(limit, MAX_BARS)));
-    const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+    // 429 要退避重试而非直接放弃：单纯降速无法覆盖突发，
+    // 且一个 CA 拉不到就会整档掉出 RPS 排名（覆盖率阈值判定）。
+    let response: Response | undefined;
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.#retryBaseMs * 2 ** (attempt - 1)));
+        await this.#throttle();
+      }
+      try { response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) }); }
+      catch {
+        if (attempt === 3) throw new GeckoTerminalError('GECKO_NETWORK', 'K 线请求网络失败或超时');
+        continue;
+      }
+      if (response.status !== 429) break;
+      if (attempt === 3) throw new GeckoTerminalError('GECKO_RATE_LIMIT', 'K 线请求持续被限流', 429);
+    }
+    if (!response) throw new GeckoTerminalError('GECKO_NETWORK', 'K 线请求无响应');
     if (!response.ok) {
-      throw new GeckoTerminalError(`K 线请求失败（${response.status}）`, response.status);
+      throw new GeckoTerminalError('GECKO_HTTP', `K 线请求失败（${response.status}）`, response.status);
     }
     const parsed = ohlcvSchema.safeParse(await response.json());
-    if (!parsed.success) throw new GeckoTerminalError('K 线响应未通过校验');
+    if (!parsed.success) throw new GeckoTerminalError('GECKO_VALIDATION', 'K 线响应未通过校验');
     // 上游按时间倒序返回；统一成升序，并把秒级时间戳转毫秒
     return parsed.data.data.attributes.ohlcv_list
       .map(([time, open, high, low, close, volume]) => ({

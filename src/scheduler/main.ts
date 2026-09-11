@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { pathToFileURL } from 'node:url';
 import { canonicalCa, isQueryableCa } from '../addresses.js';
 import { DexScreenerClient } from '../api/dexscreener.js';
-import { GeckoTerminalClient } from '../api/geckoterminal.js';
+import { GeckoTerminalClient, GeckoTerminalError } from '../api/geckoterminal.js';
 import { ErwaClient, ErwaError } from '../api/erwa.js';
 import { assertPoolCapacity, loadStrategy, StrategyConfigError, type StrategyConfig } from '../config/strategy.js';
 import { calculateObservationRps } from '../indicators/observation-rps.js';
@@ -67,7 +67,7 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
       snapshot.failures++;
       log({ event: 'request_failed', stage, ...(ca ? { ca } : {}), code: error instanceof ErwaError || error instanceof QuotaStopError
         || error instanceof TelegramError || error instanceof PoolSelectionError || error instanceof RuntimeStateError
-        || error instanceof StrategyConfigError ? error.code : 'UNEXPECTED_ERROR' });
+        || error instanceof StrategyConfigError || error instanceof GeckoTerminalError ? error.code : 'UNEXPECTED_ERROR' });
     };
     const halted = () => stopping || quota.state(clock()).halted || state.rateLimitStore.getUntil() > clock();
     async function syncUsage(stage: string) {
@@ -175,7 +175,7 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
         if (opts.klineSource && pool && network) {
           member.klineStatus = 'ready';
           try {
-            const bars = await opts.klineSource.getCandles15m(network, pool);
+            const bars = await opts.klineSource.getCandles15m(network, pool, cfg.kline.bars15m);
             if (bars.length) {
               candles.upsertCandles(member.pool.ca, '15m', bars);
               candles.upsertCandles(member.pool.ca, '1h', aggregateCandles(bars, INTERVAL_MS['15m'], INTERVAL_MS['1h']));
@@ -274,7 +274,7 @@ async function main() {
     client: new ErwaClient({ baseUrl: config.erwaApiBase, token: config.erwaApiToken, onCall: quota.onCall }),
     // 直连 DexScreener 官方批量端点：30 个/批、60 req/min，且不消耗二娃配额
     dexBatch: new DexScreenerClient(),
-    klineSource: new GeckoTerminalClient(),
+    klineSource: new GeckoTerminalClient({ requestsPerMinute: cfg.kline.requestsPerMinute }),
     operationalAlert: async (text) => { if (config.dryRun) console.log(`[DRY_RUN] ${text}`); else await telegram.send(text); } });
   if (config.dryRun) {
     try { const report = await scheduler.runOnce(); if (report?.halted || !report?.poolComplete) process.exitCode = 1; }

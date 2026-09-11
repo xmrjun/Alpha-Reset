@@ -36,6 +36,7 @@ export interface StrategyConfig {
   pullback: { minBarsSinceHigh: number; maxRsi: number };
   supplementary: { volMaPeriod: number; rsiBelow: number };
   indicators: { rsiPeriod: number };
+  kline: { source: 'geckoterminal'; requestsPerMinute: number; bars15m: number };
   schedule: { mainLoopMinutes: number;
     klineRefresh: { range24h: number; range7d: number; range30d: number } };
   quota: { dailyLimit: number; degradeAtPercent: number; haltAtPercent: number };
@@ -67,6 +68,8 @@ const strategySchema: z.ZodType<StrategyConfig> = z.strictObject({
   indicators: z.strictObject({ rsiPeriod: positiveInteger }),
   pullback: z.strictObject({ minBarsSinceHigh: positiveInteger, maxRsi: rsiValue }),
   supplementary: z.strictObject({ volMaPeriod: positiveInteger, rsiBelow: rsiValue }),
+  kline: z.strictObject({ source: z.literal('geckoterminal'),
+    requestsPerMinute: positiveInteger.max(30), bars15m: positiveInteger.max(1000) }),
   schedule: z.strictObject({ mainLoopMinutes: positiveInteger, klineRefresh: z.strictObject({
     range24h: positiveInteger, range7d: positiveInteger, range30d: positiveInteger,
   }) }),
