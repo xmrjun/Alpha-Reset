@@ -1,0 +1,39 @@
+{
+  "name": "alpha-reset",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
+    "build": "npm run clean && tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "dry-run": "npm run build && DRY_RUN=1 node dist/src/scheduler/main.js",
+    "start": "node dist/src/scheduler/main.js",
+    "web": "node dist/src/web/server.js",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build:web": "tsc --noEmit -p web/tsconfig.json && vite build --config web/vite.config.ts",
+    "preview:web": "vite preview --config web/vite.config.ts",
+    "test:web": "npm run build:web && node --test test/browser/*.test.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.0.0",
+    "lightweight-charts": "^5.2.1",
+    "node-cron": "^4.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "~5.9.0",
+    "vite": "^7.3.6"
+  }
+}

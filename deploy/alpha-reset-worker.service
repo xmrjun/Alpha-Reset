@@ -1,0 +1,17 @@
+[Unit]
+Description=Alpha-Reset monitoring scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/Alpha-Reset
+EnvironmentFile=/root/Alpha-Reset/.env
+Environment=DRY_RUN=0
+ExecStart=/root/.nvm/versions/node/v24.21.0/bin/node /root/Alpha-Reset/dist/src/scheduler/main.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

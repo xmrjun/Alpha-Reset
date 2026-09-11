@@ -1,0 +1,29 @@
+# ===== 机密配置：绝不入库 =====
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+config.local.*
+
+# 依赖与构建
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+*.pyc
+
+# 运行时数据
+logs/
+*.log
+data/
+*.db
+*.sqlite*
+.cache/
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store

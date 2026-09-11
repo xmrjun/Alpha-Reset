@@ -1,0 +1,14 @@
+[Unit]
+Description=Alpha-Reset local JSON API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/Alpha-Reset
+EnvironmentFile=/root/Alpha-Reset/.env
+ExecStart=/root/.nvm/versions/node/v24.21.0/bin/node /root/Alpha-Reset/dist/src/web/server.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
