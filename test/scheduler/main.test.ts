@@ -10,12 +10,12 @@ import { createCandleStore } from '../../src/store/candles.js';
 import { createUsageStore } from '../../src/store/usage.js';
 import { HOUR_MS, INTERVAL_MS } from '../../src/market.js';
 import type { DexSnapshot, Interval, Range } from '../../src/types.js';
-import { boardPoolItem, candle, poolItem } from '../helpers.js';
+import { SAMPLE_STRATEGY, boardPoolItem, candle, poolItem } from '../helpers.js';
 
 const now = 100 * 24 * HOUR_MS;
 function fixture(t: TestContext) {
   const db = openDatabase(':memory:'); t.after(() => db.close());
-  const cfg = loadStrategy();
+  const cfg = loadStrategy(SAMPLE_STRATEGY);
   const requests: string[] = [];
   const logs: Record<string, unknown>[] = [];
   const quota = createQuotaGuard(db, cfg, () => now);
@@ -26,7 +26,7 @@ function fixture(t: TestContext) {
     // DexScreener 免认证且不计配额，故不调 quota.onCall()
     async getDexScreener(ca: string): Promise<DexSnapshot> {
       requests.push('dex:' + ca);
-      return { priceUsd: 1, marketCap: 1_000_000, liquidityUsd: 100_000,
+      return { pairAddress: '0xpool', chainId: 'bsc', priceUsd: 1, marketCap: 1_000_000, liquidityUsd: 100_000,
         priceChange: { m5: 0, h1: 0, h6: 0, h24: 5 },
         pairCreatedAt: now - 60 * INTERVAL_MS['1d'] };
     },
@@ -101,7 +101,7 @@ test('A1 查不到上市时间则跳过该 CA，不消耗行情配额', async (t
   const f = fixture(t);
   // dex 不计配额，故照常调用；此处查不到上市时间
   f.client.getDexScreener = async (ca: string): Promise<DexSnapshot> => { f.requests.push('dex:' + ca);
-    return { priceUsd: 1, marketCap: 1_000_000, liquidityUsd: 100_000,
+    return { pairAddress: '0xpool', chainId: 'bsc', priceUsd: 1, marketCap: 1_000_000, liquidityUsd: 100_000,
       priceChange: { m5: 0, h1: 0, h6: 0, h24: 5 }, pairCreatedAt: null }; };
   const result = await f.make().runOnce(now);
   assert.equal(result!.results[0]!.result.reasons.a1, false);

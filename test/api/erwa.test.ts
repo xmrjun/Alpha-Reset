@@ -28,19 +28,19 @@ test('观察组参数编码、认证头和字段映射，丢弃多余字段', as
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async (input: URL, init: RequestInit) => {
     assert.equal(input.pathname, '/api/v1/group_ca/board/summary');
-    assert.equal(input.searchParams.get('group_name'), '镭射猫聊天');
+    assert.equal(input.searchParams.get('group_name'), '示例群组一');
     assert.equal(input.searchParams.get('days'), '365');
     assert.equal(input.searchParams.get('limit'), '200');
     assert.equal(new Headers(init.headers).get('Authorization') === 'Bearer fake-api-secret', true);
     assert.equal(init.redirect, 'error');
     assert.ok(init.signal instanceof AbortSignal);
     return Response.json({ cas: [{ ca: 'test-ca', symbol: 'TEST', chain: 'solana', market_cap: 100_000,
-      liquidity: 50_000, volume_24h: 0, group_name: '镭射猫聊天', latest_mention_time: 1_000, total_mentions: 7,
+      liquidity: 50_000, volume_24h: 0, group_name: '示例群组一', latest_mention_time: 1_000, total_mentions: 7,
       unrelated: 'discard-me' }, { ca: 'new-ca' }] });
   });
-  assert.deepEqual(await makeClient(() => calls++).getBoardSummary({ groupName: '镭射猫聊天', days: 365, limit: 200 }), [
+  assert.deepEqual(await makeClient(() => calls++).getBoardSummary({ groupName: '示例群组一', days: 365, limit: 200 }), [
     { ca: 'test-ca', symbol: 'TEST', chain: 'solana', marketCap: 100_000, liquidity: 50_000,
-      volume24h: 0, groupName: '镭射猫聊天', latestMentionTime: 1_000, totalMentions: 7 },
+      volume24h: 0, groupName: '示例群组一', latestMentionTime: 1_000, totalMentions: 7 },
     { ca: 'new-ca', symbol: null, chain: null, marketCap: null, liquidity: null,
       volume24h: null, groupName: null, latestMentionTime: null, totalMentions: null },
   ]);
@@ -53,7 +53,7 @@ test('观察组可接受带时区 ISO 提及时间，默认 days/limit 与 API �
     assert.equal(url.searchParams.get('limit'), '60');
     return Response.json({ cas: [{ ca: 'a', latest_mention_time: '2026-09-11T12:00:00+08:00' }] });
   });
-  const items = await makeClient().getBoardSummary({ groupName: '孙哥聊天' });
+  const items = await makeClient().getBoardSummary({ groupName: '示例群组二' });
   assert.equal(items[0]!.latestMentionTime, Date.parse('2026-09-11T04:00:00Z'));
 });
 
@@ -76,7 +76,7 @@ test('线上市值格式：优先精确最新市值，备用 K/M/B 格式严格�
     { ca: 'd', market_cap: '1000' }, { ca: 'e', market_cap: null },
     { ca: 'f', market_cap: '1M', latest_market_cap: 0 },
   ] }));
-  const items = await makeClient().getBoardSummary({ groupName: '镭射猫聊天' });
+  const items = await makeClient().getBoardSummary({ groupName: '示例群组一' });
   assert.deepEqual(items.map((item) => item.marketCap), [31_234_567, 50_500, 1_200_000_000, 1000, null, 0]);
   assert.equal(items[0]!.latestMentionTime, null);
 });
@@ -167,11 +167,11 @@ test('所有端点均验证业务状态和响应类型', async (t) => {
   let response: unknown = { status: 'error', cas: [] };
   t.mock.method(globalThis, 'fetch', async () => Response.json(response));
   const client = makeClient();
-  await assert.rejects(client.getBoardSummary({ groupName: '猴哥聊天' }), hasCode('ERWA_STATUS'));
+  await assert.rejects(client.getBoardSummary({ groupName: '示例群组三' }), hasCode('ERWA_STATUS'));
   response = { status: 'error', ...usage };
   await assert.rejects(client.getTokenUsage(), hasCode('ERWA_STATUS'));
   response = { cas: [{ ca: 'a', market_cap: 'invalid-secret' }] };
-  await assert.rejects(client.getBoardSummary({ groupName: '猴哥聊天' }), hasCode('ERWA_VALIDATION'));
+  await assert.rejects(client.getBoardSummary({ groupName: '示例群组三' }), hasCode('ERWA_VALIDATION'));
   response = { ...usage, used_today: -1 };
   await assert.rejects(client.getTokenUsage(), hasCode('ERWA_VALIDATION'));
   response = [];

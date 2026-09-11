@@ -2,9 +2,9 @@
   "$comment": "策略参数。非机密，随仓库版本管理，调参走 git 便于回溯。改此文件不需要改代码。",
   "version": 1,
   "observeGroups": [
-    "镭射猫聊天",
-    "孙哥聊天",
-    "猴哥聊天"
+    "示例群组一",
+    "示例群组二",
+    "示例群组三"
   ],
   "pool": {
     "historyDays": 365,
@@ -107,5 +107,6 @@
     "cooldownBars": 4,
     "mergeTagsPerCa": true,
     "$comment": "同 (ca,tag) 冷却 4 根对应周期 K 线；同一 CA 多标签合并为一条推送"
-  }
+  },
+  "$comment_observeGroups": "示例值。真实观察组配在 config/strategy.local.json（已 gitignore），loadStrategy 会优先读取它。群名需与二娃 board/summary 的 groups[] 完全一致。"
 }

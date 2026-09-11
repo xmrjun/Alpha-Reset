@@ -3,13 +3,13 @@ import { test } from 'node:test';
 import { loadStrategy } from '../../src/config/strategy.js';
 import { evaluate, type RuleInput } from '../../src/rules/evaluate.js';
 import { emptyScores, HOUR_MS, PERIOD_MS } from '../../src/market.js';
-import { candle, poolItem } from '../helpers.js';
+import { SAMPLE_STRATEGY, candle, poolItem } from '../helpers.js';
 
 function input(): RuleInput {
   const now = 1000 * 24 * HOUR_MS;
   const series = (ms: number) => Array.from({ length: 60 }, (_, i) => candle(now - (60 - i) * ms,
     100 - i, { open: 101 - i, high: 102 - i, low: 99 - i }));
-  return { ca: 'a', now, cfg: loadStrategy(), pool: poolItem('a'),
+  return { ca: 'a', now, cfg: loadStrategy(SAMPLE_STRATEGY), pool: poolItem('a'),
     candles30m: series(PERIOD_MS['30m']), candles60m: series(PERIOD_MS['60m']), candles4h: series(PERIOD_MS['4h']),
     rpsScores: { ...emptyScores(), r16: 90 }, listedAt: now - 10 * HOUR_MS,
     moments: [1, 2, 3, 4, 5, 6].map((moment) => ({ moment: moment as 1 | 2 | 3 | 4 | 5 | 6,

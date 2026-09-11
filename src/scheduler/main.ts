@@ -2,10 +2,12 @@ import cron from 'node-cron';
 import { pathToFileURL } from 'node:url';
 import { canonicalCa, isQueryableCa } from '../addresses.js';
 import { DexScreenerClient } from '../api/dexscreener.js';
+import { GeckoTerminalClient } from '../api/geckoterminal.js';
 import { ErwaClient, ErwaError } from '../api/erwa.js';
 import { assertPoolCapacity, loadStrategy, StrategyConfigError, type StrategyConfig } from '../config/strategy.js';
 import { calculateObservationRps } from '../indicators/observation-rps.js';
-import { MINUTE_MS, PERIODS, PERIOD_MS, closedCandles, contiguousTail, emptyScores } from '../market.js';
+import { INTERVAL_MS, MINUTE_MS, PERIODS, PERIOD_MS, closedCandles, contiguousTail, emptyScores } from '../market.js';
+import { aggregateCandles } from '../indicators/merge.js';
 import { rsi } from '../indicators/rsi.js';
 import { sma } from '../indicators/sma.js';
 import { createNotifier, TelegramClient, TelegramError } from '../notify/telegram.js';
@@ -34,7 +36,9 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   quota: QuotaGuard; notifier: Notifier; log?: (event: Record<string, unknown>) => void;
   clock?: () => number; operationalAlert?: (message: string) => Promise<void>;
   /** 提供时走 DexScreener 官方批量端点（30 个/批，不消耗二娃配额）；省略则逐个回退 */
-  dexBatch?: Pick<DexScreenerClient, 'getAll'> }) {
+  dexBatch?: Pick<DexScreenerClient, 'getAll'>;
+  /** K 线主源；省略则回退到二娃的 getKline */
+  klineSource?: Pick<GeckoTerminalClient, 'getCandles15m'> }) {
   const { db, cfg, client, quota, notifier } = opts;
   assertPoolCapacity(cfg);
   const poolStore = createPoolStore(db);
@@ -163,6 +167,26 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
           log({ event: 'kline_skipped', ca: member.pool.ca, reason: 'malformed_evm_address' });
           continue;
         }
+        // 主源：GeckoTerminal。只拉 15m（1000 根≈10.5 天），30m/1h/4h 全部本地合成 ——
+        // 一个 CA 一次请求，且不占二娃额度。二娃按链有无数据（robinhood 等完全没有），
+        // 历史也只有 24 小时，会让 A3.1 与 A3.2 塌缩，故仅作回退。
+        const pool = member.dex?.pairAddress;
+        const network = member.dex?.chainId;
+        if (opts.klineSource && pool && network) {
+          member.klineStatus = 'ready';
+          try {
+            const bars = await opts.klineSource.getCandles15m(network, pool);
+            if (bars.length) {
+              candles.upsertCandles(member.pool.ca, '15m', bars);
+              candles.upsertCandles(member.pool.ca, '1h', aggregateCandles(bars, INTERVAL_MS['15m'], INTERVAL_MS['1h']));
+              candles.upsertCandles(member.pool.ca, '4h', aggregateCandles(bars, INTERVAL_MS['15m'], INTERVAL_MS['4h']));
+              continue;
+            }
+            member.klineStatus = 'error';
+          } catch (error) { failure('kline_gecko', error, member.pool.ca); member.klineStatus = 'error'; }
+          continue;
+        }
+
         const ranges: Range[] = [];
         if (round % refresh.range24h === 0 || !candles.getCandles(member.pool.ca, '15m', 1).length) ranges.push('24h');
         if (!quota.state(clock()).degraded) {
@@ -250,6 +274,7 @@ async function main() {
     client: new ErwaClient({ baseUrl: config.erwaApiBase, token: config.erwaApiToken, onCall: quota.onCall }),
     // 直连 DexScreener 官方批量端点：30 个/批、60 req/min，且不消耗二娃配额
     dexBatch: new DexScreenerClient(),
+    klineSource: new GeckoTerminalClient(),
     operationalAlert: async (text) => { if (config.dryRun) console.log(`[DRY_RUN] ${text}`); else await telegram.send(text); } });
   if (config.dryRun) {
     try { const report = await scheduler.runOnce(); if (report?.halted || !report?.poolComplete) process.exitCode = 1; }
@@ -275,5 +300,13 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => { console.error(error instanceof StrategyConfigError ? error.message : '启动失败，请检查环境、策略配置和数据库'); process.exitCode = 1; });
+  main().catch((error: unknown) => {
+    if (error instanceof StrategyConfigError) console.error(error.message);
+    else {
+      // 通用文案会掩盖真实原因；打印错误类型与消息（不含堆栈细节里的密钥）
+      console.error('启动失败，请检查环境、策略配置和数据库');
+      console.error(`原因: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+    }
+    process.exitCode = 1;
+  });
 }

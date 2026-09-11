@@ -50,6 +50,8 @@ function fold(pairs: z.infer<typeof pairSchema>[]): DexSnapshot {
     || (a.pairAddress ?? '').localeCompare(b.pairAddress ?? ''))[0];
   const created = pairs.flatMap((pair) => typeof pair.pairCreatedAt === 'number' ? [pair.pairCreatedAt] : []);
   return {
+    pairAddress: main?.pairAddress ?? null,
+    chainId: main?.chainId ?? null,
     priceUsd: toNumber(main?.priceUsd),
     marketCap: toNumber(main?.marketCap) ?? toNumber(main?.fdv),
     liquidityUsd: toNumber(main?.liquidity?.usd),

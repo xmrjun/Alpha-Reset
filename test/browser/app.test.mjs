@@ -11,7 +11,7 @@ let origin;
 const now = Date.parse('2026-09-11T12:00:00Z');
 const tags = ['30m_ath_pullback', 'low_vol_60m', 'rsi_lt50_4h'];
 const poolItem = (ca, symbol, chain, marketCap) => ({ ca, symbol, chain, marketCap, liquidity: 85_000,
-  volume24h: 123_000, groupName: chain === 'bsc' ? '孙哥聊天' : '镭射猫聊天', latestMentionTime: now - 60_000,
+  volume24h: 123_000, groupName: chain === 'bsc' ? '示例群组二' : '示例群组一', latestMentionTime: now - 60_000,
   tokenName: symbol, firstSeenAt: now - 86_400_000, listedAt: now - 7 * 86_400_000, updatedAt: now,
   rpsScores: { r16: 92, r56: 76, r96: 89, r288: 64, r672: null }, tags: ca === 'asset-a' ? tags : [],
   reasons: { a1: true, a2: true, a3: true, a4: true }, lastAlertAt: ca === 'asset-a' ? now : null });

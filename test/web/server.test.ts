@@ -10,15 +10,15 @@ import { createRuntimeStore, initialRound, pendingMember } from '../../src/store
 import { loadStrategy } from '../../src/config/strategy.js';
 import { queryAlertGroups } from '../../src/web/queries.js';
 import { HOUR_MS } from '../../src/market.js';
-import { candle, poolItem } from '../helpers.js';
+import { SAMPLE_STRATEGY, candle, poolItem } from '../helpers.js';
 
 const httpFetch = globalThis.fetch;
 const now = (100 * 24 + 12) * HOUR_MS;
 async function fixture(t: TestContext) {
   const db = openDatabase(':memory:');
-  const cfg = loadStrategy();
+  const cfg = loadStrategy(SAMPLE_STRATEGY);
   createPoolStore(db).upsertPool([{ ...poolItem('a', { marketCap: 100_000 }), listedAt: 0 },
-    { ...poolItem('b', { marketCap: 200_000, chain: 'bsc', groupName: '孙哥聊天' }), listedAt: 0 }], now);
+    { ...poolItem('b', { marketCap: 200_000, chain: 'bsc', groupName: '示例群组二' }), listedAt: 0 }], now);
   createCandleStore(db).upsertCandles('a', '15m', Array.from({ length: 100 }, (_, i) => candle(now - (100 - i) * HOUR_MS / 4, 10 + i)));
   const alerts = createAlertStore(db);
   alerts.recordAlert({ ca: 'a', tag: 'low_vol_30m', firedAt: now - 1000, payload: { rsi: 30 }, pushed: true });
@@ -50,7 +50,7 @@ test('观察池筛选、排序、总数和响应字段一致；读取过程零�
   assert.equal(body.items[0].ca, 'b');
   assert.equal(body.items[0].marketCap, 200_000);
   assert.ok('rpsScores' in body.items[0]);
-  assert.equal((await (await get('/api/pool?chain=solana&group=镭射猫聊天')).json()).total, 1);
+  assert.equal((await (await get('/api/pool?chain=solana&group=示例群组一')).json()).total, 1);
   assert.equal((await (await get('/api/pool?hit=1')).json()).total, 0);
 });
 

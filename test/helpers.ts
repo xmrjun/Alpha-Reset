@@ -1,3 +1,8 @@
+import { resolve } from 'node:path';
+
+/** 测试一律用仓库内的示例配置，不受本地私有 strategy.local.json 影响 */
+export const SAMPLE_STRATEGY = resolve('config/strategy.json');
+
 import type { Candle, PoolItem, BoardPoolItem } from '../src/types.js';
 
 export function candle(openTime: number, close = 10, overrides: Partial<Candle> = {}): Candle {
@@ -6,7 +11,7 @@ export function candle(openTime: number, close = 10, overrides: Partial<Candle> 
 
 export function poolItem(ca = 'test-ca', overrides: Partial<PoolItem> = {}): PoolItem {
   return { ca, symbol: 'TEST', chain: 'solana', marketCap: 100_000,
-    liquidity: 50_000, volume24h: 10_000, groupName: '镭射猫聊天',
+    liquidity: 50_000, volume24h: 10_000, groupName: '示例群组一',
     latestMentionTime: null, ...overrides };
 }
 

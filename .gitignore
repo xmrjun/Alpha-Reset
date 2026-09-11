@@ -30,3 +30,8 @@ data/
 
 # 数据库备份
 backups/
+
+# 私有策略配置（真实观察组与阈值）
+config/strategy.local.json
+# 完整业务需求（含策略细节）
+docs/01-需求规格.md

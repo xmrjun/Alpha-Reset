@@ -61,7 +61,7 @@ const dexChange = numeric.nullable().optional();
 const dexSchema = z.object({
   ca: z.string().optional(),
   pairs: z.array(z.object({
-    pairAddress: z.string().optional(), baseToken: z.object({ address: z.string() }).optional(),
+    pairAddress: z.string().optional(), chainId: z.string().optional(), baseToken: z.object({ address: z.string() }).optional(),
     priceUsd: dexAmount, marketCap: dexAmount, fdv: dexAmount,
     liquidity: z.object({ usd: dexAmount }).nullable().optional(),
     priceChange: z.object({ m5: dexChange, h1: dexChange, h6: dexChange, h24: dexChange }).nullable().optional(),
@@ -179,7 +179,8 @@ export class ErwaClient {
       const main = [...pairs].sort((a, b) => (b.liquidity?.usd ?? -1) - (a.liquidity?.usd ?? -1)
         || (a.pairAddress ?? '').localeCompare(b.pairAddress ?? ''))[0];
       const created = pairs.flatMap((pair) => pair.pairCreatedAt == null ? [] : [pair.pairCreatedAt]);
-      return { priceUsd: main?.priceUsd ?? null, marketCap: main?.marketCap ?? main?.fdv ?? null,
+      return { pairAddress: main?.pairAddress ?? null, chainId: main?.chainId ?? null,
+        priceUsd: main?.priceUsd ?? null, marketCap: main?.marketCap ?? main?.fdv ?? null,
         liquidityUsd: main?.liquidity?.usd ?? null,
         priceChange: { m5: main?.priceChange?.m5 ?? null, h1: main?.priceChange?.h1 ?? null,
           h6: main?.priceChange?.h6 ?? null, h24: main?.priceChange?.h24 ?? null },

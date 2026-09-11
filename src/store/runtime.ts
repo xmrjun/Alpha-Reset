@@ -53,7 +53,7 @@ const roundSchema: z.ZodType<RoundSnapshot> = z.object({
       latestMentionTime: stamp.nullable(), tokenName: z.string().nullable(), firstSeenAt: stamp, listedAt: stamp.nullable(), updatedAt: stamp }),
     totalMentions: z.number().int().nonnegative(), dexAt: stamp.nullable(), dexStatus: z.enum(['pending', 'ok', 'error']),
     qualified: z.boolean(), klineStatus: z.enum(['skipped', 'ready', 'error']), rpsScores: scoresSchema,
-    dex: z.object({ priceUsd: nullableNumber, marketCap: nullableNumber, liquidityUsd: nullableNumber, pairCreatedAt: stamp.nullable(),
+    dex: z.object({ pairAddress: z.string().nullable(), chainId: z.string().nullable(), priceUsd: nullableNumber, marketCap: nullableNumber, liquidityUsd: nullableNumber, pairCreatedAt: stamp.nullable(),
       priceChange: z.object({ m5: nullableNumber, h1: nullableNumber, h6: nullableNumber, h24: nullableNumber }) }).nullable(),
     result: z.object({ passed: z.boolean(), reasons: z.object({ a1: z.boolean(), a2: z.boolean(), a3: z.boolean(), a4: z.boolean() }),
       newMoments: z.array(z.object({ moment: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]),
@@ -83,14 +83,24 @@ export class RuntimeStateError extends Error {
   constructor() { super('运行快照格式无效'); }
 }
 
-export function createRuntimeStore(db: StoreDatabase, clock = Date.now) {
+export function createRuntimeStore(db: StoreDatabase, clock = Date.now,
+  onStaleSnapshot?: (key: string) => void) {
   const select = db.prepare('SELECT payload FROM runtime_state WHERE key = ?');
   const put = db.prepare(`INSERT INTO runtime_state (key, payload, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`);
+  /**
+   * 读取快照。解析失败时**丢弃而非抛错** —— 快照只是上一轮的缓存，
+   * 字段演进（例如 DexSnapshot 新增 pairAddress/chainId）会让旧记录解析不过，
+   * 若直接抛错会导致整个进程起不来，且只能靠手工删库恢复。
+   * 丢弃的代价仅是本轮重新拉一次数据。
+   */
   function get<T>(key: string, schema: z.ZodType<T>): T | null {
     const row = select.get(key) as { payload: string } | undefined;
     if (!row) return null;
-    try { return schema.parse(JSON.parse(row.payload)); } catch { throw new RuntimeStateError(); }
+    const parsed = schema.safeParse(JSON.parse(row.payload));
+    if (parsed.success) return parsed.data;
+    onStaleSnapshot?.(key);
+    return null;
   }
   const listingSchema = z.object({ listedAt: stamp });
   const cooldownSchema = z.object({ until: stamp });

@@ -19,6 +19,9 @@ export interface BoardPoolItem extends PoolItem {
 }
 
 export interface DexSnapshot {
+  /** 主交易对地址与所在网络：GeckoTerminal 拉 K 线需要它们定位 pool */
+  pairAddress: string | null;
+  chainId: string | null;
   priceUsd: number | null;
   marketCap: number | null;
   liquidityUsd: number | null;

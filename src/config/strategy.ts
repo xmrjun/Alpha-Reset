@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 
@@ -108,9 +108,18 @@ function withoutComments(value: unknown): unknown {
 }
 
 /** 显式读取配置；规则层只 import type，并由调用方传入 cfg。 */
-export function loadStrategy(filename = resolve('config/strategy.json')): StrategyConfig {
+/**
+ * 读取策略配置。
+ *
+ * 优先 `config/strategy.local.json`（私有：真实观察组与阈值，已 gitignore），
+ * 缺失时回落到 `config/strategy.json`（示例：进仓库，仅供说明格式）。
+ * 这样仓库可以公开，而具体监控哪些群、用什么阈值不外泄。
+ */
+export function loadStrategy(filename?: string): StrategyConfig {
+  const path = filename ?? [resolve('config/strategy.local.json'), resolve('config/strategy.json')]
+    .find((candidate) => existsSync(candidate)) ?? resolve('config/strategy.json');
   let raw: unknown;
-  try { raw = JSON.parse(readFileSync(filename, 'utf8')) as unknown; }
+  try { raw = JSON.parse(readFileSync(path, 'utf8')) as unknown; }
   catch { throw new StrategyConfigError('无法读取策略配置，或 JSON 格式无效'); }
   const result = strategySchema.safeParse(withoutComments(raw));
   if (!result.success) throw new StrategyConfigError('策略配置缺少必填项、存在未知字段或阈值无效');

@@ -6,7 +6,7 @@ import { createNotifier, TelegramClient, TelegramError, type Notification } from
 import { openDatabase } from '../../src/store/db.js';
 import { createAlertStore } from '../../src/store/alerts.js';
 import { emptyScores, HOUR_MS } from '../../src/market.js';
-import { poolItem } from '../helpers.js';
+import { SAMPLE_STRATEGY, poolItem } from '../helpers.js';
 
 const notification = (): Notification => ({ ca: 'test-ca', pool: poolItem(), now: 100 * HOUR_MS,
   tags: ['30m_ath_pullback', 'low_vol_60m', 'rsi_lt50_4h'],
@@ -15,7 +15,7 @@ const notification = (): Notification => ({ ca: 'test-ca', pool: poolItem(), now
 test('同 CA 多标签合并，附链接和 RPS，逐标签冷却且边界可再推', async (t) => {
   const db = openDatabase(':memory:'); t.after(() => db.close());
   const messages: string[] = [];
-  const notifier = createNotifier({ db, cfg: loadStrategy(), dryRun: false, publicSite: 'https://alpha.example',
+  const notifier = createNotifier({ db, cfg: loadStrategy(SAMPLE_STRATEGY), dryRun: false, publicSite: 'https://alpha.example',
     send: async (text) => { messages.push(text); } });
   const input = notification();
   await notifier.notify(input);
@@ -33,7 +33,7 @@ test('同 CA 多标签合并，附链接和 RPS，逐标签冷却且边界可再
 test('并发重复通知串行检查冷却，避免重复推送', async (t) => {
   const db = openDatabase(':memory:'); t.after(() => db.close());
   let count = 0;
-  const notifier = createNotifier({ db, cfg: loadStrategy(), dryRun: false, publicSite: 'https://example.test',
+  const notifier = createNotifier({ db, cfg: loadStrategy(SAMPLE_STRATEGY), dryRun: false, publicSite: 'https://example.test',
     send: async () => { count++; } });
   await Promise.all([notifier.notify(notification()), notifier.notify(notification())]);
   assert.equal(count, 1);
@@ -43,7 +43,7 @@ test('干跑零网络，审计记录不标为已推送，不阻塞真实推送',
   const db = openDatabase(':memory:'); t.after(() => db.close());
   let sends = 0;
   const logs: string[] = [];
-  const opts = { db, cfg: loadStrategy(), publicSite: 'https://example.test',
+  const opts = { db, cfg: loadStrategy(SAMPLE_STRATEGY), publicSite: 'https://example.test',
     send: async () => { sends++; }, log: (text: string) => logs.push(text) };
   await createNotifier({ ...opts, dryRun: true }).notify(notification());
   assert.equal(sends, 0);
@@ -55,7 +55,7 @@ test('干跑零网络，审计记录不标为已推送，不阻塞真实推送',
 
 test('发送失败保留未推送审计，后续可重试；冷却轮数可配置', async (t) => {
   const db = openDatabase(':memory:'); t.after(() => db.close());
-  const cfg = loadStrategy(); cfg.alerting.cooldownBars = 1;
+  const cfg = loadStrategy(SAMPLE_STRATEGY); cfg.alerting.cooldownBars = 1;
   let fail = true;
   const notifier = createNotifier({ db, cfg, dryRun: false, publicSite: 'https://example.test',
     send: async () => { if (fail) throw new TelegramError(); } });
