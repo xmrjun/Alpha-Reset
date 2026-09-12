@@ -12,7 +12,7 @@ export function openDatabase(filename = 'data/alpha-reset.sqlite'): StoreDatabas
     db.pragma('journal_mode = WAL');
     db.pragma('busy_timeout = 5000');
     const version = db.pragma('user_version', { simple: true }) as number;
-    if (version > 2) throw new Error('数据库版本高于当前程序支持的版本');
+    if (version > 3) throw new Error('数据库版本高于当前程序支持的版本');
     if (version < 1) {
       db.transaction(() => {
         db.exec(`
@@ -80,6 +80,24 @@ export function openDatabase(filename = 'data/alpha-reset.sqlite'): StoreDatabas
           updated_at INTEGER NOT NULL
         ) WITHOUT ROWID;
         PRAGMA user_version = 2;`);
+      })();
+    }
+    if (version < 3) {
+      db.transaction(() => {
+        // 观察组的历史 CA 全集。board/summary 每群只给 top 200，
+        // 拿不到完整历史；此表由 backfill 工具填充，用于扩池与将来回测。
+        db.exec(`CREATE TABLE IF NOT EXISTS group_ca_history (
+          ca TEXT PRIMARY KEY,
+          symbol TEXT,
+          chain TEXT,
+          group_name TEXT,
+          first_mention_id INTEGER NOT NULL,
+          first_mention_at INTEGER NOT NULL,
+          synced_at INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS idx_history_mention ON group_ca_history(first_mention_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_history_group ON group_ca_history(group_name);
+        PRAGMA user_version = 3;`);
       })();
     }
     return db;

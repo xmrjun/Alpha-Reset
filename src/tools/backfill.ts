@@ -64,8 +64,10 @@ export async function backfill(opts: {
       if (earliest === null && item.create_time) earliest = item.create_time;
       if (!item.ca || !item.group_name || !wanted.has(item.group_name)) continue;
       const key = canonicalCa(item.ca);
-      // 同一 CA 多次提及只保留最早一条，用于推断首次进入观察组的时间
-      if (!seen.has(key)) seen.set(key, item);
+      // 同一 CA 多次提及只保留最早一条，用于推断首次进入观察组的时间。
+      // 注意存的是 canonical 形式：上游同一个 EVM 地址会以不同大小写出现，
+      // 若按原样入库，同一个币会变成多行，与其他表也对不上。
+      if (!seen.has(key)) seen.set(key, { ...item, ca: key });
     }
     afterId = body.next_after_id ?? items[items.length - 1]!.id;
     opts.onProgress?.({ afterId, scanned, kept: seen.size });

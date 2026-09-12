@@ -17,7 +17,8 @@
     "dev:web": "vite --config web/vite.config.ts",
     "build:web": "tsc --noEmit -p web/tsconfig.json && vite build --config web/vite.config.ts",
     "preview:web": "vite preview --config web/vite.config.ts",
-    "test:web": "npm run build:web && node --test test/browser/*.test.mjs"
+    "test:web": "npm run build:web && node --test test/browser/*.test.mjs",
+    "backfill": "npm run build && node dist/src/tools/run-backfill.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.0.0",
