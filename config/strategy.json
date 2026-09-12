@@ -7,11 +7,12 @@
     "示例群组三"
   ],
   "pool": {
-    "historyDays": 365,
+    "historyDays": 5,
     "perGroupLimit": 200,
     "maxCandidates": 132,
     "rankBy": "total_mentions",
-    "$comment": "观察池构建：board/summary 按群查 historyDays 天、每群取 perGroupLimit(API 硬上限 200)，三群去重后按 rankBy 降序截断到 maxCandidates。maxCandidates 由配额倒推：144 + 78×M ≤ dailyLimit → M ≤ 132（30 分钟刷新）。改刷新频率或 dailyLimit 时必须同步重算，启动时会自检。"
+    "$comment": "观察池构建：board/summary 按群查 historyDays 天、每群取 perGroupLimit(API 硬上限 200)，三群去重后按 rankBy 降序截断到 maxCandidates。maxCandidates 由配额倒推：144 + 78×M ≤ dailyLimit → M ≤ 132（30 分钟刷新）。改刷新频率或 dailyLimit 时必须同步重算，启动时会自检。",
+    "$comment_historyDays": "board/summary 的时间窗口。**这是增量更新，不是取历史全集**——历史全集由 group_ca_history 提供（npm run backfill 回填）。实测每群返回量：1天最多42、3天最多113、5天最多182、7天已达200触顶。limit 硬上限 200，超出会被静默截断并触发\"达到返回上限\"警告。取 5 天：既覆盖近期全部提及，又留有余量。切忌设成 365 —— 那是把一年数据硬塞进 200 的窗口，必然截断。"
   },
   "a1_age": {
     "minHours": 4,

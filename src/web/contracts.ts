@@ -28,7 +28,21 @@ export interface PoolResponse { items: PoolViewRow[]; total: number; updatedAt: 
 export interface AlertsResponse { items: AlertGroup[]; total: number }
 export interface StatsResponse {
   poolSize: number; alertsToday: number; quota: { used: number; limit: number }; lastRunAt: number | null;
-  dataQuality: { mayBeTruncated: boolean; freshPriceCount: number; rpsAvailable: boolean };
+  dataQuality: {
+    mayBeTruncated: boolean;
+    freshPriceCount: number;
+    /** 本轮实际监控的标的数 —— 分母用它，不要用 ca_pool 的历史累计 */
+    monitored: number;
+    observeGroups: number;
+    rpsAvailable: boolean;
+    /** 本轮达标、参与计分的 RPS 档位 */
+    rpsReadyKeys: string[];
+    roundStatus: string | null;
+    roundRunning: boolean;
+    rpsCoverage: Record<string, { eligible: number; available: number; complete: boolean; source: string }> | null;
+  };
+  /** A4 各档的覆盖率门槛，前端用于解释「为何暂不计分」 */
+  rpsMinCoverage: number;
   refreshMinutes: number;
   quotaWarningPercent: number;
 }

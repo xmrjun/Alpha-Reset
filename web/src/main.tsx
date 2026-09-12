@@ -45,9 +45,27 @@ function Overview({ stats }: { stats: StatsResponse | null }) {
       <div className="stat-tile"><span>上次刷新</span><strong className="time-stat" title={dateTime(stats?.lastRunAt)}>{relativeTime(stats?.lastRunAt ?? null)}</strong>
         <small>{stats ? `策略每 ${stats.refreshMinutes} 分钟运行` : '等待数据服务'}</small></div>
     </section>
-    {stats && !stats.dataQuality.rpsAvailable && <div className="notice quality-notice"><span className="notice-symbol">!</span><div>
-      <strong>RPS 排名暂停</strong><p>{stats.dataQuality.mayBeTruncated ? '观察组查询达到 API 返回上限，尚不能确认全池完整。' : '观察池的最新行情尚未完整到齐。'}
-        当前有 {stats.dataQuality.freshPriceCount} / {stats.poolSize} 条最新价格；数据完整前不生成 RPS 告警。</p></div></div>}
+    {stats && (stats.dataQuality.roundRunning || !stats.dataQuality.rpsAvailable) && (
+      <div className="notice quality-notice"><span className="notice-symbol">!</span><div>
+        {stats.dataQuality.roundRunning ? <>
+          <strong>本轮正在刷新</strong>
+          <p>正在拉取 {stats.dataQuality.monitored} 个标的的行情，约需数分钟。
+            期间 RPS 沿用上一轮结果。</p>
+        </> : <>
+          <strong>RPS 暂不可用</strong>
+          <p>本轮各档覆盖率均未达标（需 ≥ {Math.round(stats.rpsMinCoverage * 100)}%），
+            暂不生成 RPS 相关告警；其余标签不受影响。
+            当前 {stats.dataQuality.freshPriceCount} / {stats.dataQuality.monitored} 个标的有最新价格。</p>
+        </>}
+      </div></div>
+    )}
+    {stats && stats.dataQuality.rpsAvailable && stats.dataQuality.rpsReadyKeys.length < 5 && (
+      <div className="notice"><span className="notice-symbol">i</span><div>
+        <strong>部分 RPS 档位未达标</strong>
+        <p>已计分：{stats.dataQuality.rpsReadyKeys.map((k) => k.toUpperCase()).join('、')}。
+          未达标的档位本轮不参与 A4 判定（五档为「或」关系，不影响告警产生）。</p>
+      </div></div>
+    )}
     <ErrorBox message={api.error} retry={api.reload} />
     <section className="panel"><div className="panel-heading"><h2>观察组资产</h2><span>{rows.length} 条匹配 · 已载入 {pools.length} / {api.data?.total ?? 0}</span></div>
       <div className="filters"><label className="search-field"><span className="sr-only">搜索符号或 CA</span><input placeholder="搜索符号或 CA…" value={search} onChange={(e) => setSearch(e.target.value)} /></label>

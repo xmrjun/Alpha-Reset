@@ -21,8 +21,10 @@ const nullableAmount = amount.nullable().optional().transform((value) => value ?
 const mentionTime = z.union([
   timestamp,
   z.iso.datetime({ offset: true }).transform((value) => Date.parse(value)),
-  // 实测存在无时区 ISO 时间；服务器时区未确认，不猜测绝对时间。
-  z.iso.datetime({ local: true }).transform(() => null),
+  // 上游存在无时区 ISO 时间。时区已实测确认为 UTC：
+  // sync 返回的最新记录 create_time 与当时 UTC 时钟仅差数十秒（见 docs/02）。
+  // 此前因"不敢猜时区"直接丢弃，导致 ca_pool.latest_mention_time 全表 504 行皆为 NULL。
+  z.iso.datetime({ local: true }).transform((value) => Date.parse(`${value}Z`)),
 ])
   .nullable().optional().transform((value) => value ?? null);
 

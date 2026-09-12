@@ -8,19 +8,39 @@ import type { AlertFilter, AlertRow } from '../store/alerts.js';
 import type { AlertGroup, AlertsResponse } from './contracts.js';
 
 export function dataQuality(db: StoreDatabase, cfg: StrategyConfig, now: number) {
-  const pool = createPoolStore(db).getPool().filter((row) => row.groupName?.split('、').some((g) => cfg.observeGroups.includes(g)));
-  const mayBeTruncated = cfg.observeGroups.some((group) => pool.filter((row) => row.groupName?.split('、').includes(group))
-    .length >= BOARD_LIMITS.maxItems);
-  const latest = db.prepare("SELECT 1 FROM candles WHERE ca = ? AND interval = '15m' AND open_time = ?");
-  const expected = Math.floor(now / INTERVAL_MS['15m']) * INTERVAL_MS['15m'] - INTERVAL_MS['15m'];
-  const freshPriceCount = pool.filter((row) => latest.get(row.ca, expected)).length;
-  // RPS 是否可信以调度器落在快照里的 coverage 为准：那里已按 a4_rps.minCoverage 判过。
-  // 此处不可再用"全池价格都新鲜"这种旧标准重判 —— 上游约 55% 的 CA 无 K 线，
-  // 那个条件永远不成立，会把调度器算好的分值（如 r96 的 99% 覆盖）又清空。
   const round = createRuntimeStore(db).getRound();
   const coverage = round?.coverage;
-  const rpsAvailable = Boolean(coverage && Object.values(coverage).some((item) => item.complete));
-  return { mayBeTruncated, freshPriceCount, rpsAvailable, rpsCoverage: coverage ?? null };
+  const members = round?.members ?? [];
+
+  // 分母必须是「本轮实际监控的池子」，不是 ca_pool 的历史累计。
+  // 历史累计只增不减（现已 500+），拿它当分母会让新鲜度看起来永远很差。
+  const monitored = members.length;
+  const latest = db.prepare("SELECT 1 FROM candles WHERE ca = ? AND interval = '15m' AND open_time = ?");
+  const expected = Math.floor(now / INTERVAL_MS['15m']) * INTERVAL_MS['15m'] - INTERVAL_MS['15m'];
+  const freshPriceCount = members.filter((member) => latest.get(member.pool.ca, expected)).length;
+
+  // board/summary 每群硬上限 200，触顶说明该群「近期提及」被截断。
+  // 这不代表历史缺失 —— 历史全集来自 group_ca_history（npm run backfill）。
+  const mayBeTruncated = round?.sourceLimited ?? false;
+
+  // RPS 是否可用，以调度器写入快照的 coverage 为准（那里已按 a4_rps.minCoverage 判过）。
+  // 不可在此用「全池价格都新鲜」之类的旧标准重判 —— 那个标准永远不成立，
+  // 正是它当初导致 A4 恒假、系统永不告警。
+  const ready = coverage
+    ? Object.entries(coverage).filter(([, item]) => item.complete).map(([key]) => key)
+    : [];
+
+  return {
+    mayBeTruncated,
+    freshPriceCount,
+    monitored,
+    observeGroups: cfg.observeGroups.length,
+    rpsAvailable: ready.length > 0,
+    rpsReadyKeys: ready,
+    roundStatus: round?.status ?? null,
+    roundRunning: round?.status === 'running',
+    rpsCoverage: coverage ?? null,
+  };
 }
 
 export function queryAlertGroups(db: StoreDatabase, filter: AlertFilter = {}): AlertsResponse {

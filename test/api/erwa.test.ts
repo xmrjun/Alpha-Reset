@@ -78,7 +78,8 @@ test('线上市值格式：优先精确最新市值，备用 K/M/B 格式严格�
   ] }));
   const items = await makeClient().getBoardSummary({ groupName: '示例群组一' });
   assert.deepEqual(items.map((item) => item.marketCap), [31_234_567, 50_500, 1_200_000_000, 1000, null, 0]);
-  assert.equal(items[0]!.latestMentionTime, null);
+  // 上游的无时区 ISO 时间按 UTC 解析（时区已实测确认，见 docs/02）
+  assert.equal(items[0]!.latestMentionTime, Date.parse('2026-09-11T12:00:00Z'));
 });
 
 test('非法市值字符串和提及时间不能被隐式转成零或无效毫秒值', async (t) => {

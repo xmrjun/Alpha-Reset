@@ -47,7 +47,8 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
             .reduce((sum, row) => sum + (cfg.alerting.mergeTagsPerCa ? 1 : row.rows), 0),
           quota: { used: createUsageStore(db).getUsage(today)?.calls ?? 0, limit: cfg.quota.dailyLimit },
           lastRunAt: updatedAt || null, dataQuality: dataQuality(db, cfg, now),
-          refreshMinutes: cfg.schedule.mainLoopMinutes, quotaWarningPercent: cfg.quota.degradeAtPercent };
+          refreshMinutes: cfg.schedule.mainLoopMinutes, quotaWarningPercent: cfg.quota.degradeAtPercent,
+            rpsMinCoverage: cfg.a4_rps.minCoverage };
         send(200, body); return;
       }
       if (url.pathname === '/api/alerts') {
