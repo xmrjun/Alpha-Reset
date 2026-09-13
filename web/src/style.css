@@ -172,12 +172,39 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
   white-space: nowrap;
 }
 
-/* 事后表现：两组并排的窄表，窄屏横向滚动而非换行 */
-.outcomes .notice { margin: 0 20px 16px; }
+/* 事后表现：可折叠。收起时标题栏仍显示最短窗口的触发组结果。 */
+.outcomes > details > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 17px 22px;
+  cursor: pointer;
+  list-style: none;
+}
+.outcomes > details > summary::-webkit-details-marker { display: none; }
+/* 折叠标记跟随展开状态旋转；prefers-reduced-motion 下不做动画。
+   标记本身是 JSX 里的真实元素，不用 ::before content —— 原因见 components.tsx。 */
+.outcomes-caret {
+  display: inline-block;
+  color: var(--text-muted);
+  font-size: 10px;
+  transition: transform 120ms ease;
+}
+.outcomes > details[open] > summary .outcomes-caret { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .outcomes-caret { transition: none; } }
+.outcomes > details[open] > summary { border-bottom: 1px solid var(--border); }
+.outcomes-summary-title { font-size: 13px; font-weight: 600; }
+.outcomes-glance { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text); }
+.outcomes-summary-hint { margin-left: auto; font-size: 10px; color: var(--text-muted); }
+.outcomes .notice { margin: 16px 20px; }
+.outcomes > details > *:not(summary) { min-width: 0; }
 .outcomes-table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
 .outcomes-table th, .outcomes-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
 .outcomes-table thead th { color: var(--text-muted); font-weight: 500; }
 .outcomes-table .outcomes-subhead th { font-size: 10px; padding-top: 0; }
 .outcomes-table td.numeric, .outcomes-table th.numeric { text-align: right; }
+/* 跨列的组标题居中于其三列之上，子表头与数值一同右对齐 */
+.outcomes-table th.group { text-align: center; }
 .outcomes-subtitle { margin: 22px 20px 8px; font-size: 12px; }
 .outcomes-note { margin: 14px 20px 18px; font-size: 10px; color: var(--text-muted); line-height: 1.6; }

@@ -232,6 +232,9 @@ const zh = {
 
 
   outcomesTitle: '事后表现',
+  outcomesGlance: (hours: number, median: string, n: number) => `${hours}h 触发组 ${median} · ${n} 个样本`,
+  outcomesGlanceEmpty: '暂无已结算样本',
+  outcomesToggle: '展开或收起事后表现',
   outcomesHint: '本地 K 线结算，不产生上游请求',
   outcomesHorizon: '窗口',
   outcomesAlerted: '触发组',
@@ -472,6 +475,9 @@ const en: Copy = {
 
 
   outcomesTitle: 'Outcomes',
+  outcomesGlance: (hours: number, median: string, n: number) => `${hours}h triggered ${median} · n=${n}`,
+  outcomesGlanceEmpty: 'No settled samples yet',
+  outcomesToggle: 'Expand or collapse outcomes',
   outcomesHint: 'Settled from local candles; no upstream requests',
   outcomesHorizon: 'Horizon',
   outcomesAlerted: 'Triggered',

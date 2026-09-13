@@ -682,6 +682,10 @@ test('事后表现展示触发组与对照组及中位差，标签行按语言�
   const { page, errors, state } = await pageFixture(t);
   state.outcomes = outcomesWithControl;
   await page.goto(`${origin}/alerts`);
+  // 默认收起：展开前表格不可见，标题栏已给出最短窗口的结果
+  await expect(page.locator('.outcomes-table').first()).toBeHidden();
+  await expect(page.locator('.outcomes-glance')).toHaveText('1h 触发组 +4.4% · 12 个样本');
+  await page.locator('.outcomes summary').click();
   const table = page.locator('.outcomes-table').first();
   await expect(table).toContainText('1h');
   await expect(table.locator('tbody tr').first().locator('td')).toHaveText(['1h', '12', '+4.4%', '61%', '88', '-0.6%', '37%', '+5.0%']);
@@ -700,6 +704,7 @@ test('对照组为空时明确告警不可比，不把触发组数字当成跑�
   const { page, errors, state } = await pageFixture(t);
   state.outcomes = outcomesNoControl;
   await page.goto(`${origin}/alerts`);
+  await page.locator('.outcomes summary').click();
   await expect(page.locator('.outcomes .notice')).toContainText('对照组尚无样本');
   await expect(page.locator('.outcomes')).not.toContainText('对照组数据自');
   // 中位差留空而不是拿 0 当基准
@@ -713,5 +718,39 @@ test('尚无已结算收益时显示等待文案，不渲染空表', async (t) =
   await page.goto(`${origin}/alerts`);
   await expect(page.locator('.rps-waiting')).toContainText('尚无已结算的事后收益');
   await expect(page.locator('.outcomes-table')).toHaveCount(0);
+  assert.deepEqual(errors, []);
+});
+
+test('事后表现默认收起，展开状态跨刷新与跨页面保持，收起后标题栏仍给出结果', async (t) => {
+  const { page, errors, state } = await pageFixture(t);
+  state.outcomes = outcomesWithControl;
+  await page.goto(`${origin}/alerts`);
+  const summary = page.locator('.outcomes summary');
+  const table = page.locator('.outcomes-table').first();
+  await expect(table).toBeHidden();
+
+  await summary.click();
+  await expect(table).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.outcomes-table').first(), '展开状态应被记住').toBeVisible();
+
+  await page.locator('.outcomes summary').click();
+  await expect(page.locator('.outcomes-table').first()).toBeHidden();
+  // 收起后关键数字仍在标题栏，折叠不等于看不见
+  await expect(page.locator('.outcomes-glance')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.outcomes-table').first(), '收起状态同样被记住').toBeHidden();
+  assert.deepEqual(errors, []);
+});
+
+test('事后表现折叠可用键盘操作，展开后窄屏不产生横向溢出', async (t) => {
+  const { page, errors, state } = await pageFixture(t, true);
+  state.outcomes = outcomesWithControl;
+  await page.goto(`${origin}/alerts`);
+  await page.locator('.outcomes summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.outcomes-table').first()).toBeVisible();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true,
+    '390px 下展开事后表现不应横向溢出');
   assert.deepEqual(errors, []);
 });

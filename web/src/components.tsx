@@ -119,24 +119,47 @@ export function AlertCard({ item }: { item: AlertGroup }) {
 
 const pct = (value: number | null) => value === null ? '—' : (value >= 0 ? '+' : '') + value.toFixed(1) + '%';
 
+/** 展开状态按浏览器记住；存储不可用时退回默认收起，不影响渲染。 */
+function initialOutcomesOpen(): boolean {
+  try { return localStorage.getItem('alpha-outcomes-open') === '1'; } catch { return false; }
+}
+
 export function Outcomes({ data }: { data: OutcomesResponse | null }) {
   const { t, lang } = useCopy();
+  const [open, setOpen] = useState(initialOutcomesOpen);
   if (!data || !data.horizons.length) return <p className="rps-waiting">{t.outcomesNoData}</p>;
   const hasControl = data.horizons.some((row) => row.control.n > 0);
+  // 收起时标题栏仍给出最短窗口的触发组结果，否则折叠等于看不见。
+  const glance = data.horizons[0];
   return <section className="panel outcomes" aria-label={t.outcomesTitle}>
-    <div className="panel-heading"><h2>{t.outcomesTitle}</h2><span>{t.outcomesHint}</span></div>
+    <details open={open} onToggle={(event) => {
+      const next = event.currentTarget.open;
+      setOpen(next);
+      try { localStorage.setItem('alpha-outcomes-open', next ? '1' : '0'); } catch { /* 不依赖持久化 */ }
+    }}>
+    <summary className="outcomes-summary" aria-label={t.outcomesToggle}>
+      {/* 折叠标记用真实元素，不用 CSS content：content 的值必须带引号，
+          而引号穿过多层脚本写入样式文件时容易被吃掉，生成 content:▸ 这种
+          非法声明后整条被静默丢弃。放进 JSX 就没有这一层风险。 */}
+      <span className="outcomes-caret" aria-hidden="true">▸</span>
+      <span className="outcomes-summary-title">{t.outcomesTitle}</span>
+      <span className="outcomes-glance">{glance && glance.alerted.n > 0
+        ? t.outcomesGlance(glance.horizonHours, pct(glance.alerted.median), glance.alerted.n)
+        : t.outcomesGlanceEmpty}</span>
+      <span className="outcomes-summary-hint">{t.outcomesHint}</span>
+    </summary>
     {!hasControl && <div className="notice" role="status"><span className="notice-symbol">!</span>
       <div><p>{t.outcomesControlWarn}</p></div></div>}
     {hasControl && data.controlSince !== null && <p className="outcomes-note">{t.outcomesControlSince(dateTime(data.controlSince, t))}</p>}
     <div className="table-scroll"><table className="outcomes-table"><thead><tr>
       <th>{t.outcomesHorizon}</th>
-      <th colSpan={3}>{t.outcomesAlerted}</th>
-      <th colSpan={3}>{t.outcomesControl}</th>
-      <th>{t.outcomesDiff}</th>
+      <th className="numeric group" colSpan={3}>{t.outcomesAlerted}</th>
+      <th className="numeric group" colSpan={3}>{t.outcomesControl}</th>
+      <th className="numeric">{t.outcomesDiff}</th>
     </tr><tr className="outcomes-subhead">
       <th />
-      <th>{t.outcomesN}</th><th>{t.outcomesMedian}</th><th>{t.outcomesWin}</th>
-      <th>{t.outcomesN}</th><th>{t.outcomesMedian}</th><th>{t.outcomesWin}</th>
+      <th className="numeric">{t.outcomesN}</th><th className="numeric">{t.outcomesMedian}</th><th className="numeric">{t.outcomesWin}</th>
+      <th className="numeric">{t.outcomesN}</th><th className="numeric">{t.outcomesMedian}</th><th className="numeric">{t.outcomesWin}</th>
       <th />
     </tr></thead><tbody>{data.horizons.map((row) => {
       const gap = row.alerted.median !== null && row.control.median !== null ? row.alerted.median - row.control.median : null;
@@ -153,7 +176,7 @@ export function Outcomes({ data }: { data: OutcomesResponse | null }) {
     })}</tbody></table></div>
     {data.tags.length > 0 && <><h3 className="outcomes-subtitle">{t.outcomesTagTitle}</h3>
       <div className="table-scroll"><table className="outcomes-table"><thead><tr>
-        <th>{t.outcomesTag}</th><th>{t.outcomesHorizon}</th><th>{t.outcomesN}</th><th>{t.outcomesMedian}</th><th>{t.outcomesWin}</th>
+        <th>{t.outcomesTag}</th><th className="numeric">{t.outcomesHorizon}</th><th className="numeric">{t.outcomesN}</th><th className="numeric">{t.outcomesMedian}</th><th className="numeric">{t.outcomesWin}</th>
       </tr></thead><tbody>{data.tags.map((row) => <tr key={row.tag + row.horizonHours}>
         <td>{lang === 'en' ? TAG_DETAILS[row.tag as AlertTag]?.labelEn ?? row.tag : TAG_DETAILS[row.tag as AlertTag]?.label ?? row.tag}</td>
         <td className="numeric">{row.horizonHours}h</td>
@@ -164,5 +187,6 @@ export function Outcomes({ data }: { data: OutcomesResponse | null }) {
     <p className="outcomes-note">{t.outcomesCaveat}
       {data.pending > 0 && ' · ' + t.outcomesPending(data.pending)}
       {data.settledAt !== null && ' · ' + t.outcomesSettledAt(dateTime(data.settledAt, t))}</p>
+    </details>
   </section>;
 }
