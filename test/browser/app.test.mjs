@@ -14,11 +14,11 @@ const rpsKeys = ['r16', 'r56', 'r96', 'r288', 'r672'];
 const noScores = Object.fromEntries(rpsKeys.map((key) => [key, null]));
 const completedCoverage = Object.fromEntries(rpsKeys.map((key) => [key, {
   eligible: 132, available: 126, complete: false, source: 'kline', unknownAge: 2,
-  missingCurrent: 3, missingStart: 1, ageConfirmedByHistory: 8, boundedPassCount: 5,
+  missingCurrent: 3, missingStart: 1, inactive: 9, ageConfirmedByHistory: 8, boundedPassCount: 5,
 }]));
 const pendingCoverage = Object.fromEntries(rpsKeys.map((key) => [key, {
   eligible: 0, available: 0, complete: false, source: 'kline', unknownAge: 0,
-  missingCurrent: 0, missingStart: 0, ageConfirmedByHistory: 0, boundedPassCount: 0,
+  missingCurrent: 0, missingStart: 0, inactive: 0, ageConfirmedByHistory: 0, boundedPassCount: 0,
 }]));
 const poolItem = (ca, symbol, chain, marketCap) => ({ ca, symbol, chain, marketCap, liquidity: 85_000,
   volume24h: 123_000, groupName: chain === 'bsc' ? '示例群组二' : '示例群组一', latestMentionTime: now - 60_000,
@@ -38,8 +38,9 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await new Promise((resolve) => server?.httpServer.close(resolve)); });
 
-async function pageFixture(t, mobile = false) {
-  const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1050 }, colorScheme: 'light', timezoneId: 'UTC' });
+async function pageFixture(t, mobile = false, locale = 'zh-CN') {
+  // 页面按浏览器语言选择中英文；既有断言都是中文，这里固定 zh-CN，英文另有专门用例。
+  const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1050 }, colorScheme: 'light', timezoneId: 'UTC', locale });
   t.after(() => context.close());
   const page = await context.newPage();
   // 所有测试均使用浏览器内的 WebSocket 替身，不连接本地预览或任何上游。
@@ -233,7 +234,7 @@ test('刷新中保留上一轮数值与数值区间，显示进度和原覆盖�
   await expect(page.locator('.rps-summary time').first()).toHaveAttribute('datetime', '2026-09-11T11:30:00.000Z');
   await expect(page.locator('.rps-summary time').nth(1)).toHaveAttribute('datetime', '2026-09-11T11:40:00.000Z');
   await expect(page.locator('.coverage-card')).toHaveCount(5);
-  await expect(page.getByRole('article', { name: 'R16 覆盖' }).locator('dd')).toHaveText(['126 / 132', '3', '1', '2', '8']);
+  await expect(page.getByRole('article', { name: 'R16 覆盖' }).locator('dd')).toHaveText(['126 / 132', '3', '1', '2', '9', '8']);
   await expect(page.locator('.rps-coverage')).toContainText('最近已完成计算的覆盖');
   await expect(page.locator('.pool-table .chip')).toHaveCount(0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -523,7 +524,7 @@ test('移动端区分最新名单494与采集和计算132，展示五分钟名�
   await expect(page.getByRole('progressbar', { name: '本轮行情采集进度' })).toHaveAttribute('max', '132');
   await expect(page.getByRole('progressbar', { name: '本轮行情采集进度' })).toHaveAttribute('value', '67');
   await expect(page.locator('.rps-summary')).toContainText('原观察池 132 个 CA');
-  await expect(page.getByRole('article', { name: 'R16 覆盖' }).locator('dd')).toHaveText(['126 / 132', '3', '1', '2', '8']);
+  await expect(page.getByRole('article', { name: 'R16 覆盖' }).locator('dd')).toHaveText(['126 / 132', '3', '1', '2', '9', '8']);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.equal(requests.length, httpBefore, '全池与速率信息由 WS 完整快照直接更新');
   if (process.env.WEB_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.WEB_SCREENSHOT_DIR, 'alpha-observation-pool-mobile.png'), fullPage: true });
@@ -616,4 +617,48 @@ test('主轮与迟到补算文案使用后端配置，WS更新后同步显示', 
   await expect(row.locator('.rps-stamp')).toContainText('本轮');
   await expect(row.locator('.chip')).toHaveCount(0);
   assert.equal(requests.length, before);
+});
+
+test('英文浏览器渲染英文界面，可手动切回中文并跨刷新保持', async (t) => {
+  const { page, errors } = await pageFixture(t, false, 'en-US');
+  await page.goto(origin);
+  // 默认跟随浏览器语言：非中文环境一律英文
+  await expect(page.getByRole('heading', { name: 'Watchlist', level: 1 })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByRole('link', { name: 'Alert history' })).toBeVisible();
+  await expect(page.getByPlaceholder('Search symbol or CA…')).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: /Market cap/ })).toBeVisible();
+  // 标签文案也走英文
+  await expect(page.locator('.chip').first()).toContainText('all-time-high pullback');
+  // 只校验界面文案已英文化；表格单元格里的群名是夹具数据，本来就是中文，不在此列。
+  // .filters 里的群组下拉选项是夹具数据（中文群名），标签单独断言。
+  const chrome = await page.locator('.page-heading, .stats-grid, .panel-heading, thead, .footnote').allInnerTexts();
+  const leftover = chrome.filter((text) => /[\u4e00-\u9fff]/.test(text));
+  assert.deepEqual(leftover, [], '界面文案不应残留中文');
+  await expect(page.locator('footer')).toContainText('Chat data');
+  for (const label of ['Chain', 'Group', 'Signal']) await expect(page.locator('.filters')).toContainText(label);
+  await expect(page.locator('.filters')).toContainText('All chains');
+
+  await page.getByRole('button', { name: /Switch language/ }).click();
+  await expect(page.getByRole('heading', { name: '观察池', level: 1 })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  // 手动选择优先于浏览器语言，刷新后保持
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '观察池', level: 1 })).toBeVisible();
+  assert.deepEqual(errors, []);
+});
+
+test('中文浏览器默认中文，且英文切换后详情与告警页同样生效', async (t) => {
+  const { page, errors } = await pageFixture(t);
+  await page.goto(origin);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await page.getByRole('button', { name: /Switch language/ }).click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await page.goto(`${origin}/alerts`);
+  await expect(page.getByRole('heading', { name: 'Alert history', level: 1 })).toBeVisible();
+  await expect(page.getByText('Triggers')).toBeVisible();
+  await page.goto(`${origin}/ca/asset-a`);
+  await expect(page.getByText('Asset info')).toBeVisible();
+  await expect(page.getByText('Market source')).toBeVisible();
+  assert.deepEqual(errors, []);
 });

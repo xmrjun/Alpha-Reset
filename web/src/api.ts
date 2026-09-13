@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { hasLiveSnapshot, subscribeLive } from './live.js';
+import { COPY, detectLang, type Copy } from './i18n.js';
+
+// 加载错误在 Hook 内部产生，拿不到 React 上下文，这里按当前语言取一份文案。
+const fallbackCopy = (): Copy => COPY[detectLang()];
 
 export function useApi<T>(url: string) {
   const [data, setData] = useState<T | null>(null);
@@ -39,14 +43,15 @@ export function useApi<T>(url: string) {
       const startedWithPush = pushVersion;
       try {
         const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
-        if (!response.ok) throw new Error(`数据加载失败（HTTP ${response.status}）`);
+        if (!response.ok) throw new Error(fallbackCopy().loadFailed(response.status));
         const body: T = await response.json();
         // 在途 HTTP 可能早于刚到的 WS 快照，不能让它把评分、进度或标签倒退。
         if (startedWithPush === pushVersion) publish(body);
       } catch (cause) {
         if (!controller.signal.aborted && startedWithPush === pushVersion) {
-          setError(cause instanceof Error && /^数据加载失败/.test(cause.message)
-            ? cause.message : '无法连接本地数据服务');
+          const copy = fallbackCopy();
+          setError(cause instanceof Error && cause.message.startsWith(copy.loadFailedPrefix)
+            ? cause.message : copy.connectFailed);
         }
       } finally {
         pending = false;
@@ -65,12 +70,13 @@ export const number = (value: number | null | undefined) => value == null ? '—
   : new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(value);
 export const money = (value: number | null | undefined) => value == null ? '—'
   : '$' + new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
-export const dateTime = (value: number | null | undefined) => value == null ? '未知'
-  : new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(value);
-export function relativeTime(value: number | null) {
-  if (value === null) return '尚未运行';
+/** 数字与金额两种语言同形（en-US 分组），只有日期与相对时间随语言变化。 */
+export const dateTime = (value: number | null | undefined, t: Copy) => value == null ? t.unknownTime
+  : new Intl.DateTimeFormat(t.dateLocale, { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(value);
+export function relativeTime(value: number | null, t: Copy) {
+  if (value === null) return t.notRunYet;
   const minutes = Math.max(0, Math.floor((Date.now() - value) / 60_000));
-  if (minutes < 1) return '刚刚';
-  if (minutes < 60) return `${minutes} 分钟前`;
-  return minutes < 1440 ? `${Math.floor(minutes / 60)} 小时前` : `${Math.floor(minutes / 1440)} 天前`;
+  if (minutes < 1) return t.justNow;
+  if (minutes < 60) return t.minutesAgo(minutes);
+  return minutes < 1440 ? t.hoursAgo(Math.floor(minutes / 60)) : t.daysAgo(Math.floor(minutes / 1440));
 }

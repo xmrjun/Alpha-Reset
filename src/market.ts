@@ -20,19 +20,20 @@ export const BREAKOUTS = [
   { moment: 6, period: '4h', setting: 'a3_6_4h_48bar', ath: false, tag: '4h_8d_high_pullback' },
 ] as const satisfies ReadonlyArray<{ moment: MomentId; period: Period; setting: string; ath: boolean; tag: AlertTag }>;
 
-export const TAG_DETAILS: Record<AlertTag, { period: Period; label: string; icon: string }> = {
-  '30m_ath_pullback': { period: '30m', label: '30分钟历史新高回调提醒', icon: '▲▲' },
-  '30m_1d_high_pullback': { period: '30m', label: '30分钟一日新高回调', icon: '▲' },
-  '60m_ath_pullback': { period: '60m', label: '60分钟历史新高回调', icon: '▲▲' },
-  '60m_2d_high_pullback': { period: '60m', label: '60分钟两日新高回调', icon: '▲' },
-  '4h_ath_pullback': { period: '4h', label: '4小时历史新高回调', icon: '▲▲' },
-  '4h_8d_high_pullback': { period: '4h', label: '4小时八日新高回调', icon: '▲' },
-  low_vol_30m: { period: '30m', label: '低量30分钟', icon: '▽' },
-  low_vol_60m: { period: '60m', label: '低量60分钟', icon: '▽' },
-  low_vol_4h: { period: '4h', label: '低量4小时', icon: '▽' },
-  rsi_lt50_30m: { period: '30m', label: '30分钟RSI小于50', icon: '⊘' },
-  rsi_lt50_60m: { period: '60m', label: '60分钟RSI小于50', icon: '⊘' },
-  rsi_lt50_4h: { period: '4h', label: '4小时RSI小于50', icon: '⊘' },
+/** label 用于 Telegram 推送（保持中文）；labelEn 供页面按语言选择。 */
+export const TAG_DETAILS: Record<AlertTag, { period: Period; label: string; labelEn: string; icon: string }> = {
+  '30m_ath_pullback': { period: '30m', label: '30分钟历史新高回调提醒', labelEn: '30m all-time-high pullback', icon: '▲▲' },
+  '30m_1d_high_pullback': { period: '30m', label: '30分钟一日新高回调', labelEn: '30m 1-day-high pullback', icon: '▲' },
+  '60m_ath_pullback': { period: '60m', label: '60分钟历史新高回调', labelEn: '60m all-time-high pullback', icon: '▲▲' },
+  '60m_2d_high_pullback': { period: '60m', label: '60分钟两日新高回调', labelEn: '60m 2-day-high pullback', icon: '▲' },
+  '4h_ath_pullback': { period: '4h', label: '4小时历史新高回调', labelEn: '4h all-time-high pullback', icon: '▲▲' },
+  '4h_8d_high_pullback': { period: '4h', label: '4小时八日新高回调', labelEn: '4h 8-day-high pullback', icon: '▲' },
+  low_vol_30m: { period: '30m', label: '低量30分钟', labelEn: 'Low volume 30m', icon: '▽' },
+  low_vol_60m: { period: '60m', label: '低量60分钟', labelEn: 'Low volume 60m', icon: '▽' },
+  low_vol_4h: { period: '4h', label: '低量4小时', labelEn: 'Low volume 4h', icon: '▽' },
+  rsi_lt50_30m: { period: '30m', label: '30分钟RSI小于50', labelEn: 'RSI < 50 on 30m', icon: '⊘' },
+  rsi_lt50_60m: { period: '60m', label: '60分钟RSI小于50', labelEn: 'RSI < 50 on 60m', icon: '⊘' },
+  rsi_lt50_4h: { period: '4h', label: '4小时RSI小于50', labelEn: 'RSI < 50 on 4h', icon: '⊘' },
 };
 
 /** 时间常量是周期单位，策略阈值由调用方传入。 */

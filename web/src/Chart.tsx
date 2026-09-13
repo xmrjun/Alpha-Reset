@@ -4,10 +4,12 @@ import { CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSerie
 import { BREAKOUTS, PERIOD_MS, TAG_DETAILS, type Period } from '../../src/market.js';
 import type { DetailResponse } from '../../src/web/contracts.js';
 import { dateTime, number } from './api.js';
+import { useCopy } from './i18n.js';
 
 export function PriceChart({ data, period, theme }: { data: DetailResponse; period: Period; theme: string }) {
+  const { t, lang } = useCopy();
   const container = useRef<HTMLDivElement>(null);
-  const [tooltip, setTooltip] = useState('移动光标查看 OHLCV 与指标');
+  const [tooltip, setTooltip] = useState(t.chartHint);
   const [marks, setMarks] = useState<{ x: number; label: string; height: number }[]>([]);
   useEffect(() => {
     if (!container.current || !data.candles.length) return;
@@ -53,13 +55,13 @@ export function PriceChart({ data, period, theme }: { data: DetailResponse; peri
       momentLabels.set(moment.barTime, [...(momentLabels.get(moment.barTime) ?? []), moment.moment]);
     }
     createSeriesMarkers(price, [...momentLabels].sort((a, b) => a[0] - b[0]).map(([barTime, moments]) => ({
-      time: time(barTime), position: 'aboveBar', shape: 'arrowDown', color: color('--text'), text: `时刻 ${moments.join(' / ')}`,
+      time: time(barTime), position: 'aboveBar', shape: 'arrowDown', color: color('--text'), text: t.chartMoment(moments.join(' / ')),
     })));
     const updateMarks = () => setMarks(data.alerts.filter((alert) => alert.tags.some((tag) => TAG_DETAILS[tag].period === period))
       .map((alert) => {
         const barTime = Math.floor(alert.firedAt / PERIOD_MS[period]) * PERIOD_MS[period] - PERIOD_MS[period];
         const x = times.has(barTime) ? chart.timeScale().timeToCoordinate(time(barTime)) : null;
-        return { x: x ?? -1, label: `${dateTime(alert.firedAt)} · ${alert.tags.map((tag) => TAG_DETAILS[tag].label).join('，')}`,
+        return { x: x ?? -1, label: `${dateTime(alert.firedAt, t)} · ${alert.tags.map((tag) => lang === 'en' ? TAG_DETAILS[tag].labelEn : TAG_DETAILS[tag].label).join(lang === 'en' ? ', ' : '，')}`,
           height: chart.panes()[0]?.getHeight() ?? 320 };
       }).filter((mark) => mark.x >= 0 && mark.x < host.clientWidth - 60));
     chart.timeScale().subscribeVisibleLogicalRangeChange(updateMarks);
@@ -69,24 +71,24 @@ export function PriceChart({ data, period, theme }: { data: DetailResponse; peri
       const vol = event.seriesData.get(volume);
       const ma = event.seriesData.get(volumeMa);
       const rs = event.seriesData.get(strength);
-      if (bar && 'open' in bar) setTooltip(`${typeof event.time === 'number' ? dateTime(event.time * 1000) : ''}  `
-        + `开 ${number(bar.open)}  高 ${number(bar.high)}  低 ${number(bar.low)}  收 ${number(bar.close)}  `
-        + `量 ${number(vol && 'value' in vol ? vol.value : null)}  MA ${number(ma && 'value' in ma ? ma.value : null)}  `
+      if (bar && 'open' in bar) setTooltip(`${typeof event.time === 'number' ? dateTime(event.time * 1000, t) : ''}  `
+        + t.chartOhlc(number(bar.open), number(bar.high), number(bar.low), number(bar.close))
+        + t.chartVolMa(number(vol && 'value' in vol ? vol.value : null), number(ma && 'value' in ma ? ma.value : null))
         + `RSI ${number(rs && 'value' in rs ? rs.value : null)}`);
     });
     chart.timeScale().fitContent(); updateMarks();
     return () => { observer.disconnect(); chart.timeScale().unsubscribeVisibleLogicalRangeChange(updateMarks); chart.remove(); };
-  }, [data, period, theme]);
+  }, [data, period, theme, t, lang]);
 
   return <div className="chart-section"><div className="chart-legend">
-    <span><i className="legend-hollow" />涨 · 空心</span><span><i className="legend-solid" />跌 · 实心</span>
-    <span><i className="legend-square" />成交量</span><span><i className="legend-line period-60m" />量 MA{data.indicators.parameters.volMaPeriod}</span>
+    <span><i className="legend-hollow" />{t.legendUp}</span><span><i className="legend-solid" />{t.legendDown}</span>
+    <span><i className="legend-square" />{t.legendVolume}</span><span><i className="legend-line period-60m" />{t.legendVolMa(data.indicators.parameters.volMaPeriod)}</span>
     <span><i className="legend-line period-30m" />RSI{data.indicators.parameters.rsiPeriod}</span>
-    <span>↓ 新高时刻</span><span>┊ 告警点</span>
-  </div><div className="chart-tooltip" aria-label="K 线指标">{tooltip}</div>
-    <div className="chart-shell"><div ref={container} className="chart-canvas" role="img" aria-label={`${period} K 线、成交量和 RSI，完整数据可在下方表格查看`} />
+    <span>{t.legendMoment}</span><span>{t.legendAlert}</span>
+  </div><div className="chart-tooltip" aria-label={t.chartTooltipLabel}>{tooltip}</div>
+    <div className="chart-shell"><div ref={container} className="chart-canvas" role="img" aria-label={t.chartCanvasLabel(period)} />
       <div className="chart-alert-overlay" aria-hidden="true">{marks.map((mark, index) => <div className="chart-alert-line" key={index}
-        title={mark.label} style={{ left: mark.x, height: mark.height }}><span>告警</span></div>)}</div>
-    </div><p className="chart-credit">时间以图表刻度为 UTC、悬停信息为本地时间显示 · <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a></p>
+        title={mark.label} style={{ left: mark.x, height: mark.height }}><span>{t.chartAlertMark}</span></div>)}</div>
+    </div><p className="chart-credit">{t.chartCredit}<a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a></p>
   </div>;
 }
