@@ -54,3 +54,58 @@ test('非法配置、缺少字段及拼写错误拒绝，错误不包含原始�
     }));
   }
 });
+
+test('Gecko全量模式不再套用二娃每CA K线预算，名单刷新与评分频率独立', () => {
+  const cfg = loadStrategy(SAMPLE_STRATEGY);
+  cfg.pool.maxCandidates = null;
+  cfg.pool.refreshMinutes = 5;
+  cfg.schedule.mainLoopMinutes = 30;
+  withConfig(JSON.stringify(cfg), filename => {
+    const loaded = loadStrategy(filename);
+    assert.equal(loaded.pool.maxCandidates, null);
+    assert.equal(loaded.pool.refreshMinutes, 5);
+    assert.equal(loaded.schedule.mainLoopMinutes, 30);
+  });
+  cfg.pool.maxCandidates = 1000;
+  withConfig(JSON.stringify(cfg), filename => assert.equal(loadStrategy(filename).pool.maxCandidates, 1000));
+  for (const invalid of [0, -1, 1.5]) {
+    withConfig(JSON.stringify({...cfg, pool:{...cfg.pool, refreshMinutes:invalid}}),filename=>assert.throws(()=>loadStrategy(filename),StrategyConfigError));
+  }
+});
+
+test('GMGN独立预算与预热配置向后兼容，错误链或无效限额不能启用', () => {
+  const cfg = loadStrategy(SAMPLE_STRATEGY);
+  const legacy = structuredClone(cfg) as typeof cfg & { kline: { gmgn?: typeof cfg.kline.gmgn } };
+  const raw = JSON.parse(JSON.stringify(legacy)) as { kline: Record<string, unknown> };
+  delete raw.kline.gmgn;
+  withConfig(JSON.stringify(raw), filename => {
+    const value = loadStrategy(filename);
+    assert.equal(value.kline.gmgn.enabled, false);
+    assert.equal(value.kline.gmgn.requestsPerMinute, 30);
+    assert.equal(value.kline.requestsPerMinute, cfg.kline.requestsPerMinute);
+    assert.equal(value.pool.maxCandidates, null);
+  });
+  for (const invalid of [
+    { enabled: true, chains: [] }, { chains: ['sol', 'sol'] }, { chains: ['unknown'] },
+    { requestsPerMinute: 0 }, { requestsPerMinute: 61 }, { requestsPerMinute: 1.5 },
+    { refreshMinutes: 0 }, { warmupAssets: 0 }, { warmupAssets: 101 },
+  ]) {
+    withConfig(JSON.stringify({ ...cfg, kline: { ...cfg.kline, gmgn: { ...cfg.kline.gmgn, ...invalid } } }),
+      filename => assert.throws(() => loadStrategy(filename), StrategyConfigError));
+  }
+});
+
+test('正式T采用60分钟，共享迟到修订间隔3分钟，旧配置缺省revisionMinutes仍兼容', () => {
+  const cfg = loadStrategy(SAMPLE_STRATEGY);
+  assert.equal(cfg.schedule.mainLoopMinutes, 60);
+  assert.equal(cfg.schedule.revisionMinutes, 3);
+  const legacy = JSON.parse(JSON.stringify(cfg)) as { schedule: Record<string, unknown> };
+  delete legacy.schedule.revisionMinutes;
+  withConfig(JSON.stringify(legacy), (filename) => assert.equal(loadStrategy(filename).schedule.revisionMinutes, 3));
+  for (const invalid of [0, -1, 1.5, '3', null]) {
+    withConfig(JSON.stringify({ ...cfg, schedule: { ...cfg.schedule, revisionMinutes: invalid } }),
+      (filename) => assert.throws(() => loadStrategy(filename), StrategyConfigError));
+  }
+  withConfig(JSON.stringify({ ...cfg, schedule: { ...cfg.schedule, revisionMinutes: 5 } }),
+    (filename) => assert.equal(loadStrategy(filename).schedule.revisionMinutes, 5));
+});

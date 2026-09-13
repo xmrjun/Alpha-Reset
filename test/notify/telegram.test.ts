@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
 import { loadStrategy } from '../../src/config/strategy.js';
-import { createNotifier, TelegramClient, TelegramError, type Notification } from '../../src/notify/telegram.js';
+import { createNotifier, formatUsd, TelegramClient, TelegramError, type Notification } from '../../src/notify/telegram.js';
+import { emptyBounds } from '../../src/indicators/observation-rps.js';
 import { openDatabase } from '../../src/store/db.js';
 import { createAlertStore } from '../../src/store/alerts.js';
 import { emptyScores, HOUR_MS } from '../../src/market.js';
@@ -85,4 +86,71 @@ test('Telegram 校验成功标记，HTTP/业务/网络错误不回显认证值',
     });
   }
   assert.doesNotMatch(inspect(client), /fake-telegram-private/);
+});
+
+test('缺数告警明确写保守下界，审计保留范围而不伪造精确分数', async (t) => {
+  const db = openDatabase(':memory:'); t.after(() => db.close());
+  const texts: string[] = [];
+  const notifier = createNotifier({ db, cfg: loadStrategy(SAMPLE_STRATEGY), dryRun: false,
+    publicSite: 'https://example.test', send: async (text) => { texts.push(text); } });
+  const rpsBounds = { ...emptyBounds(), r96: { lower: 86.666, upper: 96, status: 'pass' as const } };
+  await notifier.notify({ ...notification(), rpsScores: emptyScores(), rpsBounds });
+  assert.match(texts[0]!, /R96 ≥ 86\.6（完整池保守下界） > 85/);
+  const payload = createAlertStore(db).getAlerts().items[0]!.payload as { rpsScores: { r96: null }; rpsBounds: typeof rpsBounds };
+  assert.equal(payload.rpsScores.r96, null);
+  assert.deepEqual(payload.rpsBounds.r96, rpsBounds.r96);
+});
+
+test('推送首行带上触发时市值，与 A2 判定用的 pool.marketCap 同源', async (t) => {
+  const db = openDatabase(':memory:'); t.after(() => db.close());
+  const messages: string[] = [];
+  const notifier = createNotifier({ db, cfg: loadStrategy(SAMPLE_STRATEGY), dryRun: false,
+    publicSite: 'https://alpha.example', send: async (text) => { messages.push(text); } });
+  const input = notification();
+  input.pool.marketCap = 2_140_000;
+  // 陈旧的 dex 快照不得参与显示：实测它在成员固定序列后不再刷新
+  input.payload = { ...input.payload as object, dex: { marketCap: 9_999_999 } };
+  await notifier.notify(input);
+  const first = messages[0]!.split('\n')[0]!;
+  assert.match(first, /^TEST · \$2\.14M · /, '符号 · 市值 · 时间');
+  assert.ok(!messages[0]!.includes('9,999,999') && !messages[0]!.includes('$10M'), '不得使用 dex 的陈旧市值');
+});
+
+test('市值缺失或非有限时整段省略，不在推送里留占位符', async (t) => {
+  const db = openDatabase(':memory:'); t.after(() => db.close());
+  for (const value of [null, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const messages: string[] = [];
+    const notifier = createNotifier({ db, cfg: loadStrategy(SAMPLE_STRATEGY), dryRun: false,
+      publicSite: 'https://alpha.example', send: async (text) => { messages.push(text); } });
+    const input = notification();
+    input.ca = `ca-${String(value)}`;
+    input.pool.marketCap = value as number | null;
+    await notifier.notify(input);
+    const first = messages[0]!.split('\n')[0]!;
+    assert.equal(first, `TEST · ${new Date(input.now).toISOString()}`, String(value));
+    assert.ok(!first.includes('—') && !first.includes('$'), '不显示占位符');
+  }
+});
+
+test('触发时市值写入告警 payload 并被冻结，供告警历史回看', async (t) => {
+  const db = openDatabase(':memory:'); t.after(() => db.close());
+  const notifier = createNotifier({ db, cfg: loadStrategy(SAMPLE_STRATEGY), dryRun: false,
+    publicSite: 'https://alpha.example', send: async () => {} });
+  const input = notification();
+  input.payload = { ...input.payload as object, marketCap: 1_250_000 };
+  await notifier.notify(input);
+  const rows = createAlertStore(db).getAlerts().items;
+  assert.ok(rows.length > 0);
+  for (const row of rows) {
+    assert.equal((row.payload as { marketCap?: unknown }).marketCap, 1_250_000);
+  }
+});
+
+test('金额格式与前端 money() 一致，缺值返回 null 交由调用方省略', () => {
+  assert.equal(formatUsd(2_140_000), '$2.14M');
+  assert.equal(formatUsd(51_000), '$51K');
+  assert.equal(formatUsd(0), '$0');
+  for (const value of [null, undefined, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.equal(formatUsd(value), null, String(value));
+  }
 });

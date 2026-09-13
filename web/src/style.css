@@ -63,3 +63,111 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
 @media (max-width: 620px) {
   .site-header { padding: 0 15px; height: auto; min-height: 70px; flex-wrap: wrap; gap: 0 15px; }.brand { font-size: 12px; }.brand-icon { width: 29px; height: 29px; font-size: 25px; }.header-actions { margin-left: auto; }.header-actions button { font-size: 11px; padding: 5px 8px; }nav { order: 3; width: 100%; gap: 25px; height: 37px; font-size: 12px; }main { padding: 26px 15px 40px; }h1 { font-size: 26px; }.page-heading { gap: 12px; }.page-heading p:not(.eyebrow) { font-size: 11px; }.page-heading > button { font-size: 11px; padding: 6px 9px; }.stats-grid { gap: 10px; }.stat-tile { padding: 15px; min-height: 125px; }.stat-tile strong { font-size: 25px; }.stat-tile .time-stat { font-size: 20px; }.stat-tile em { font-size: 10px; }.stat-tile small { font-size: 9px; }.notice { padding: 12px; }.notice p { font-size: 10px; }.panel-heading { padding: 16px; flex-wrap: wrap; }.filters { padding: 0 15px 15px; gap: 9px; }.filters .search-field { flex-basis: 100%; }.filters label { flex: 1; min-width: 0; }select { min-width: 0; width: 100%; }.alert-filters { padding-top: 16px; }.alert-filters label { flex-basis: calc(50% - 9px); }.alert-filters label input { width: 100%; min-width: 0; }.alert-filters button { width: 100%; }.alert-heading > div { align-items: start; flex-direction: column; gap: 5px; }.alert-card { padding: 16px; }.detail-grid aside { grid-template-columns: 1fr; }.chart-canvas { height: 500px; }.chart-tooltip { font-size: 9px; }.chart-legend { gap: 7px 10px; }.period-switch { gap: 4px; }footer { padding: 22px 15px; flex-wrap: wrap; gap: 8px; }footer span:nth-child(2) { order: 3; width: 100%; }
 }
+
+/* 告警卡片的外部行情站链接 */
+.alert-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 10px 0 4px;
+}
+.alert-links a {
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  white-space: nowrap;
+}
+.alert-links a:hover {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.rps-track .rps-bound-label { font-size: 9px; white-space: nowrap; }
+.series-address { overflow-wrap: anywhere; font-size: 11px; }
+
+/* 评分值与其时间来源放在一起，历史参考不会冒充本轮信号。 */
+.rps-cell { min-width: 324px; }
+.rps-bars { display: grid; grid-template-columns: repeat(5, 60px); gap: 6px; width: 324px; align-items: end; }
+.rps-column { width: 60px; text-align: center; }
+.rps-track { width: 18px; height: 32px; margin: 0 auto 3px; }
+.rps-value { display: block; font-size: 10px; line-height: 1.4; font-weight: 550; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rps-value.rps-bound-label { font-size: 9px; }
+.rps-column small { display: block; font-size: 9px; }
+.rps-stamp { display: block; width: fit-content; margin-top: 5px; font-size: 10px; color: var(--text-muted); }
+.rps-stamp-previous, .rps-stamp-stale { color: var(--accent); border-bottom: 1px dotted var(--accent); }
+.rps-state { border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; font-size: 11px; }
+.rps-state-stale, .rps-state-previous { color: var(--accent); border-color: var(--accent); }
+.rps-summary, .rps-coverage { margin-bottom: 20px; min-width: 0; }
+.rps-summary-body { padding: 0 22px 18px; font-size: 12px; overflow-wrap: anywhere; }
+.rps-summary-body p + p { margin-top: 5px; color: var(--text-muted); }
+.collection-notice { align-items: flex-start; }
+.collection-notice > div { min-width: 0; width: 100%; }
+.collection-notice progress { display: block; width: 100%; max-width: 420px; height: 6px; margin: 9px 0; accent-color: var(--accent); }
+.coverage-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; padding: 0 22px 16px; }
+.coverage-card { min-width: 0; border: 1px solid var(--border); border-radius: 7px; padding: 12px; }
+.coverage-card h3 { font-size: 12px; margin-bottom: 8px; }
+.coverage-card dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; margin: 0; font-size: 10px; }
+.coverage-card dt { color: var(--text-muted); }
+.coverage-card dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.coverage-note, .rps-waiting { font-size: 11px; color: var(--text-muted); }
+.coverage-note { padding: 0 22px 18px; }
+.rps-waiting { margin: 0 0 20px; }
+@media (max-width: 1050px) { .coverage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 620px) {
+  main, .panel, .table-scroll { min-width: 0; max-width: 100%; }
+  .coverage-grid { grid-template-columns: minmax(0, 1fr); padding: 0 15px 14px; gap: 8px; }
+  .coverage-card { padding: 11px 13px; }
+  .coverage-card dl { font-size: 11px; }
+  .rps-summary-body, .coverage-note { padding-left: 15px; padding-right: 15px; }
+  .rps-summary-body { font-size: 11px; }
+  .collection-notice p { overflow-wrap: anywhere; }
+}
+
+/* 最新名单、固定计算池和长采集轮分别说明，避免把历史归档数当作观察池。 */
+.observation-summary { margin-bottom: 22px; }
+.observation-summary-body { padding: 0 22px 19px; min-width: 0; }
+.observation-summary-body p { color: var(--text-muted); font-size: 12px; margin: 7px 0; overflow-wrap: anywhere; }
+.observation-summary-body .observation-limited, .observation-summary-body .discovery-failed,
+.observation-summary-body .discovery-halted { color: var(--accent); }
+@media (max-width: 620px) {
+  .observation-summary-body { padding: 0 16px 15px; }
+  .observation-summary-body p { font-size: 11px; }
+  .observation-summary .panel-heading > span { overflow-wrap: anywhere; }
+}
+
+/* 两路采集与固定时点的评分来源分开显示，窄屏按段落自然换行。 */
+.market-sources { min-width: 0; margin-bottom: 20px; }
+.market-sources-body { padding: 0 22px 18px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.market-sources-body p { margin: 7px 0; }
+.gmgn-status { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-muted); }
+.gmgn-status strong, .scoring-sources { color: var(--text); }
+.gmgn-status[data-status="cooldown"] strong, .gmgn-status[data-status="auth_error"] strong { color: var(--accent); }
+.rps-source { display: block; margin-bottom: 5px; font-size: 10px; color: var(--text-muted); }
+@media (max-width: 620px) {
+  .market-sources-body { padding: 0 16px 15px; font-size: 11px; }
+  .market-sources .panel-heading { flex-wrap: wrap; gap: 6px; }
+  .market-sources .panel-heading > span { overflow-wrap: anywhere; }
+}
+
+/* 告警卡片：触发时市值与推送状态同排。
+   选择器带 .alert-heading 前缀是为了压过通用的 `.alert-heading > div`
+   （含 620px 断点下的纵向堆叠），让这两个徽标在窄屏也保持并排。 */
+.alert-heading > .alert-meta {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.alert-marketcap {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  white-space: nowrap;
+}

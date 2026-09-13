@@ -72,13 +72,14 @@ test('完整一轮合并三组同一 CA、累积四周期、记录时刻并逐 C
 
 test('差异化刷新由配置轮数驱动，重跑不会清除历史 K 线', async (t) => {
   const f = fixture(t);
+  const roundMs = f.cfg.schedule.mainLoopMinutes * HOUR_MS / 60;
   const scheduler = f.make();
   await scheduler.runOnce(now);
   f.requests.length = 0;
-  await scheduler.runOnce(now + HOUR_MS / 2);
+  await scheduler.runOnce(now + roundMs);
   assert.deepEqual(f.requests, ['usage', 'board', 'board', 'board', 'usage', 'dex:a', 'usage', 'a:24h']);
   f.requests.length = 0;
-  await scheduler.runOnce(now + HOUR_MS);
+  await scheduler.runOnce(now + 2 * roundMs);
   assert.ok(f.requests.includes('a:7d'));
   assert.ok(!f.requests.includes('a:30d'));
   assert.equal(createCandleStore(f.db).getCandles('a', '15m').length, 60);
@@ -126,12 +127,16 @@ test('本地已达停止阈值时零请求，轮中达到阈值也即时停止',
   assert.throws(() => f.quota.onCall(), QuotaStopError);
 });
 
-test('配额查询失败时停止，观察组失败时不给部分池算可触发的 RPS', async (t) => {
+test('配额查询失败时降级继续，观察组失败时不给部分池算可触发的 RPS', async (t) => {
   const f = fixture(t);
   f.client.getTokenUsage = async () => { throw new Error('secret-not-for-log'); };
-  const stopped = await f.make().runOnce(now);
-  assert.equal(stopped!.halted, true);
-  assert.equal(f.requests.length, 0);
+  const degraded = await f.make().runOnce(now);
+  // 远端配额查询只是监控动作，本地 api_usage 一直在记账，足以支撑降级/停止判定。
+  // 此前一失败就中止整轮，实测生产环境 10 轮里 6 轮因此空转。
+  assert.equal(degraded!.halted, false);
+  assert.ok(degraded!.results.length > 0, '配额查询失败不应导致零评估');
+  assert.ok(f.logs.some((entry) => entry.event === 'usage_sync_degraded'), '降级需留痕');
+  // 无论走哪条路径，底层错误都不得泄露
   assert.doesNotMatch(JSON.stringify(f.logs), /secret-not-for-log/);
   f.client.getTokenUsage = async () => ({ usedToday: 0, remainingToday: 10_500, dailyLimit: 10_500 });
   let groups = 0;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RpsBounds } from '../indicators/observation-rps.js';
 import type { StrategyConfig } from '../config/strategy.js';
 import { PERIOD_MS, RPS_KEYS, TAG_DETAILS, type RpsScores } from '../market.js';
 import { createAlertStore } from '../store/alerts.js';
@@ -32,12 +33,22 @@ export class TelegramClient {
   }
 }
 
+/**
+ * 紧凑美元格式，与前端 money() 完全一致，保证同一条告警在推送和页面上读数相同。
+ * 缺值返回 null 由调用方整段省略，不在推送里显示占位符。
+ */
+export function formatUsd(value: number | null | undefined): string | null {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  return '$' + new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+}
+
 export interface Notification {
   ca: string;
   pool: PoolItem;
   now: number;
   tags: AlertTag[];
   rpsScores: RpsScores;
+  rpsBounds?: RpsBounds;
   payload: Record<string, unknown>;
 }
 
@@ -56,16 +67,26 @@ export function createNotifier(opts: {
     const scores = RPS_KEYS.filter((key) => input.rpsScores[key] !== null
       && input.rpsScores[key]! > opts.cfg.a4_rps.periods[key].threshold)
       .map((key) => `${key.toUpperCase()} ${input.rpsScores[key]!.toFixed(1)} > ${opts.cfg.a4_rps.periods[key].threshold}`);
+    const boundedScores = RPS_KEYS.flatMap((key) => {
+      const bound = input.rpsBounds?.[key];
+      if (input.rpsScores[key] !== null || !bound || bound.status !== 'pass'
+        || !(bound.lower > opts.cfg.a4_rps.periods[key].threshold)) return [];
+      return [key.toUpperCase() + ' ≥ ' + (Math.floor(bound.lower * 10) / 10).toFixed(1) + '（完整池保守下界） > ' + opts.cfg.a4_rps.periods[key].threshold];
+    });
+    scores.push(...boundedScores);
     let messages = 0;
     for (const group of groups) {
       const text = [
-        `${input.pool.symbol?.slice(0, 80) || '未知代币'} · ${new Date(input.now).toISOString()}`,
+        // 市值取 pool.marketCap —— A2 门控判定用的就是它，显示值必须与判定值同源；
+        // dex.marketCap 只在成员尚未固定序列时刷新，实测中位陈旧 16 小时，不可用于信号。
+        [input.pool.symbol?.slice(0, 80) || '未知代币', formatUsd(input.pool.marketCap),
+          new Date(input.now).toISOString()].filter(Boolean).join(' · '),
         input.ca.slice(0, 256), group.map((tag) => `【${TAG_DETAILS[tag].label}】`).join('，'),
         scores.join(' · '), `K 线：${chartUrl}`,
       ].filter(Boolean).join('\n');
       const ids = opts.db.transaction(() => group.map((tag) => store.recordAlert({
         ca: input.ca, tag, firedAt: input.now,
-        payload: { ...input.payload, tags: group, rpsScores: input.rpsScores, dryRun: opts.dryRun },
+        payload: { ...input.payload, tags: group, rpsScores: input.rpsScores, rpsBounds: input.rpsBounds ?? null, dryRun: opts.dryRun },
       })))();
       if (opts.dryRun) log(`[DRY_RUN] ${text}`);
       else { await opts.send(text); store.markPushed(ids); }

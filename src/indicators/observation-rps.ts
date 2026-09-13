@@ -1,78 +1,126 @@
 import type { StrategyConfig } from '../config/strategy.js';
-import { HOUR_MS, INTERVAL_MS, RPS_KEYS, closedCandles, emptyScores, type RpsKey, type RpsScores } from '../market.js';
+import { INTERVAL_MS, RPS_KEYS, closedCandles, emptyScores, type RpsKey } from '../market.js';
 import type { DexSnapshot } from '../types.js';
 import type { RpsMember } from './pool-rps.js';
 import { rps } from './rps.js';
 
 export interface ObservationRpsMember extends RpsMember {
+  // 保留输入兼容；五档排名均不再使用滚动行情快照。
   dex: DexSnapshot | null;
-  dexStatus: 'pending' | 'ok' | 'error';
+  dexStatus: 'pending' | 'ok' | 'error' | 'absent';
 }
 
-/**
- * 在容差内取最接近目标时刻的收盘价。
- *
- * 必要性：15m K 线只覆盖最近 24h，更早的端点只能落在 1h 线的整点上，
- * 而 target 是按 15m 网格推算的。若要求精确命中，只有当前网格恰好在整点时
- * 才取得到——其余 3/4 的时间 r288/r672 必然为 0 覆盖（实测确实是 0/115、0/94）。
- */
-export function priceAt(prices: Map<number, number>, target: number, toleranceMs: number): number | undefined {
-  const exact = prices.get(target);
-  if (exact !== undefined) return exact;
-  let best: number | undefined;
-  let bestGap = Number.POSITIVE_INFINITY;
-  for (const [time, price] of prices) {
-    const gap = Math.abs(time - target);
-    if (gap <= toleranceMs && gap < bestGap) { bestGap = gap; best = price; }
-  }
-  return best;
+export interface RpsBound {
+  lower: number;
+  upper: number;
+  status: 'exact' | 'pass' | 'fail' | 'unknown';
+}
+export type RpsBounds = Record<RpsKey, RpsBound | null>;
+export const emptyBounds = (): RpsBounds => ({ r16: null, r56: null, r96: null, r288: null, r672: null });
+export interface ObservationRpsCoverage {
+  eligible: number;
+  available: number;
+  complete: boolean;
+  source: 'kline';
+  unknownAge: number;
+  /** 基准前 inactiveAfterBars 根内无任何已收盘价，已从分母剔除的成员数。 */
+  inactive: number;
+  /** Dex 日期不能证明该窗口存续，但已验证历史可以证明的成员数。 */
+  ageConfirmedByHistory: number;
+  missingCurrent: number;
+  missingStart: number;
+  boundedPassCount: number;
 }
 
-/** 不用 A1/A2 子集替换排名池。适龄 CA 缺失价格时，整档留空而非缩小分母。 */
+/** 同一已验证行情序列、同一收盘时刻；缺失价格不缩小全池排名分母。 */
 export function calculateObservationRps(members: ObservationRpsMember[], now: number, cfg: StrategyConfig) {
   const scores = new Map(members.map((member) => [member.ca, emptyScores()]));
-  const coverage = {} as Record<RpsKey, { eligible: number; available: number; complete: boolean; source: 'dex_h24' | 'kline' }>;
-  const history = new Map(members.map((member) => {
-    const bars = closedCandles(member.candles15m, INTERVAL_MS['15m'], now);
-    const prices = new Map<number, number>();
-    for (const bar of closedCandles(member.candles60m, INTERVAL_MS['1h'], now)) prices.set(bar.openTime + INTERVAL_MS['1h'], bar.close);
-    for (const bar of bars) prices.set(bar.openTime + INTERVAL_MS['15m'], bar.close);
-    return [member.ca, { prices }];
-  }));
-  // 所有 CA 的「当前价」对齐到同一收盘时刻，保证排名可比
+  const bounds = new Map(members.map((member) => [member.ca, emptyBounds()]));
+  // 数学范围可供观察；未达到策略门槛时不进入bounds/scores，也不能标为通过。
+  const displayBounds = new Map(members.map((member) => [member.ca, emptyBounds()]));
+  const coverage = {} as Record<RpsKey, ObservationRpsCoverage>;
   const baseline = Math.floor(now / INTERVAL_MS['15m']) * INTERVAL_MS['15m'];
-  const staleToleranceMs = cfg.a4_rps.maxStaleBars * INTERVAL_MS['15m'];
+  const history = new Map(members.map((member) => {
+    const prices = new Map<number, number>();
+    for (const bar of closedCandles(member.candles60m, INTERVAL_MS['1h'], baseline)) {
+      if (Number.isFinite(bar.close) && bar.close > 0) prices.set(bar.openTime + INTERVAL_MS['1h'], bar.close);
+    }
+    for (const bar of closedCandles(member.candles15m, INTERVAL_MS['15m'], baseline)) {
+      if (Number.isFinite(bar.close) && bar.close > 0) prices.set(bar.openTime + INTERVAL_MS['15m'], bar.close);
+    }
+    let firstCloseTime = Infinity;
+    let lastCloseTime = -Infinity;
+    for (const closeTime of prices.keys()) {
+      firstCloseTime = Math.min(firstCloseTime, closeTime);
+      lastCloseTime = Math.max(lastCloseTime, closeTime);
+    }
+    return [member.ca, { prices, firstCloseTime, lastCloseTime }];
+  }));
+
+  // 失活基准对所有档位一致：没有 close(T) 的资产在任何窗口都算不出涨幅。
+  const staleBefore = baseline - cfg.a4_rps.inactiveAfterBars * INTERVAL_MS['15m'];
   for (const key of RPS_KEYS) {
-    const useDex = key === 'r96' && cfg.a4_rps.periods[key].hours * HOUR_MS === INTERVAL_MS['1d'];
+    const target = baseline - cfg.a4_rps.periods[key].bars * INTERVAL_MS['15m'];
+    let unknownAge = 0;
+    let inactive = 0;
+    let ageConfirmedByHistory = 0;
+    const eligible = members.filter((member) => {
+      // 失活剔除只依据已验证的证据，绝不因为「本地还没抓到」就缩小分母：
+      //   有历史 → 上游最新已收盘价早于 staleBefore，说明该池已停止成交；
+      //   无历史 → 仅当上游明确应答「该 CA 无任何交易对」(dexStatus=absent) 才剔除。
+      // 采集中断只会让 dexStatus 变成 error/pending，成员仍留在分母，
+      // 覆盖率随之下降并触发 minCoverage 失败，不会被误判成个别资产失活。
+      const { lastCloseTime } = history.get(member.ca)!;
+      const hasHistory = lastCloseTime > -Infinity;
+      if (hasHistory ? lastCloseTime < staleBefore : member.dexStatus === 'absent') { inactive++; return false; }
+      const dexConfirmsAge = member.listedAt !== null && Number.isFinite(member.listedAt)
+        && member.listedAt <= target;
+      // 调用方只提供同链、同 CA、同固定池的已验证序列。历史正价证明“当时已存在”，
+      // 不推断真实上市日，也不改写 A1 所用 listedAt；必须比较收盘时间而非开盘时间。
+      const historyConfirmsAge = history.get(member.ca)!.firstCloseTime <= target;
+      if (historyConfirmsAge) {
+        if (!dexConfirmsAge) ageConfirmedByHistory++;
+        return true;
+      }
+      if (dexConfirmsAge) return true;
+      if (member.listedAt === null || !Number.isFinite(member.listedAt) || member.listedAt > baseline) unknownAge++;
+      return false;
+    });
     const changes = new Map<string, number>();
-    const target = Math.floor(now / INTERVAL_MS['15m']) * INTERVAL_MS['15m'] - cfg.a4_rps.periods[key].bars * INTERVAL_MS['15m'];
-    const eligible = members.filter((member) => member.listedAt !== null && Number.isFinite(member.listedAt)
-      && member.listedAt <= (useDex ? now - INTERVAL_MS['1d'] : target));
+    let missingCurrent = 0;
+    let missingStart = 0;
     for (const member of eligible) {
-      if (useDex) {
-        const change = member.dex?.priceChange.h24;
-        if (member.dexStatus === 'ok' && change != null && Number.isFinite(change)) changes.set(member.ca, change);
-      } else {
-        const data = history.get(member.ca)!;
-        // 端点超出 15m 线的 24h 覆盖范围时放宽到 1h 容差（更早的端点只落在 1h 线的整点上）
-        const span = cfg.a4_rps.periods[key].bars * INTERVAL_MS['15m'];
-        const startPrice = priceAt(data.prices, target, span > INTERVAL_MS['1d'] ? INTERVAL_MS['1h'] : INTERVAL_MS['15m']);
-        // 当前价统一取同一基准时刻，而不是各 CA 各自的最后一根 ——
-        // RPS 是横向排名，端点时刻不一致会让涨幅失去可比性；
-        // 而全池拉取需数分钟，用「各自最后一根」还会把先拉到的成员判成过期而剔除。
-        const nowPrice = priceAt(data.prices, baseline, staleToleranceMs);
-        if (nowPrice !== undefined && startPrice !== undefined
-          && startPrice > 0 && Number.isFinite(startPrice) && Number.isFinite(nowPrice)) {
-          changes.set(member.ca, (nowPrice / startPrice - 1) * 100);
-        }
+      const prices = history.get(member.ca)!.prices;
+      const current = prices.get(baseline);
+      const start = prices.get(target);
+      if (current === undefined) missingCurrent++;
+      if (start === undefined) missingStart++;
+      if (current !== undefined && start !== undefined) {
+        const change = (current / start - 1) * 100;
+        if (Number.isFinite(change)) changes.set(member.ca, change);
       }
     }
-    // 覆盖率阈值：上游约 55% 的 CA 无 K 线数据(status=unavailable)。
-    // 若要求“全池无一缺失”，该档 RPS 永远算不出来，A4 恒假，系统永不告警。
-    const ratio = eligible.length > 0 ? changes.size / eligible.length : 0;
-    const complete = ratio >= cfg.a4_rps.minCoverage && changes.size >= cfg.a4_rps.minRanked;
-    coverage[key] = { eligible: eligible.length, available: changes.size, complete, source: useDex ? 'dex_h24' : 'kline' };
-    if (complete) for (const [ca, score] of rps(changes)) scores.get(ca)![key] = score;
+    // 本窗口仍无法证明年龄者可能适龄：全部保留在潜在分母，不能静默缩小排名池。
+    const possibleEligible = eligible.length + unknownAge;
+    const ratio = possibleEligible ? changes.size / possibleEligible : 0;
+    const usable = changes.size >= cfg.a4_rps.minRanked && ratio >= cfg.a4_rps.minCoverage;
+    const complete = usable && unknownAge === 0 && changes.size === eligible.length;
+    const item: ObservationRpsCoverage = { eligible: possibleEligible, available: changes.size,
+      complete, source: 'kline', unknownAge, inactive, ageConfirmedByHistory, missingCurrent, missingStart, boundedPassCount: 0 };
+    coverage[key] = item;
+    const exactScores = complete ? rps(changes) : null;
+    for (const [ca, change] of changes) {
+      const rank = 1 + [...changes.values()].filter((other) => other > change).length;
+      const missing = possibleEligible - changes.size;
+      const lower = (1 - (rank + missing) / possibleEligible) * 100;
+      const upper = (1 - rank / possibleEligible) * 100;
+      const threshold = cfg.a4_rps.periods[key].threshold;
+      const status = complete ? 'exact' : usable && lower > threshold ? 'pass' : upper <= threshold ? 'fail' : 'unknown';
+      displayBounds.get(ca)![key] = { lower, upper, status };
+      if (usable) bounds.get(ca)![key] = { lower, upper, status };
+      if (complete) scores.get(ca)![key] = exactScores!.get(ca)!;
+      if (status === 'pass') item.boundedPassCount++;
+    }
   }
-  return { scores: scores as Map<string, RpsScores>, coverage };
+  return { scores, bounds, displayBounds, coverage };
 }

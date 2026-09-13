@@ -2,6 +2,7 @@ import type { StrategyConfig } from '../config/strategy.js';
 import { detectHigh } from '../indicators/breakout.js';
 import { rsi } from '../indicators/rsi.js';
 import { sma } from '../indicators/sma.js';
+import type { RpsBounds } from '../indicators/observation-rps.js';
 import { BREAKOUTS, PERIODS, PERIOD_MS, RPS_KEYS, closedCandles, contiguousTail, isFresh } from '../market.js';
 import { checkPreconditions } from './preconditions.js';
 import type { RpsScores } from '../market.js';
@@ -16,6 +17,8 @@ export interface RuleInput {
   candles60m: Candle[];
   candles4h: Candle[];
   rpsScores: RpsScores;
+  /** 缺数时仅下界超过阈值的完整池区间可触发。 */
+  rpsBounds?: RpsBounds;
   listedAt: number | null;
   moments: BreakoutMoment[];
 }
@@ -65,8 +68,15 @@ export function evaluate(input: RuleInput): RuleOutput {
   const reasons = {
     ...checkPreconditions({ now, listedAt: input.listedAt, pool }, cfg),
     a3: BREAKOUTS.some((rule) => cfg.a3_breakout.enabled[rule.setting] && moments.has(rule.moment)),
-    a4: RPS_KEYS.some((key) => input.rpsScores[key] !== null && Number.isFinite(input.rpsScores[key])
-      && input.rpsScores[key]! > cfg.a4_rps.periods[key].threshold),
+    a4: RPS_KEYS.some((key) => {
+      const score = input.rpsScores[key];
+      const bound = input.rpsBounds?.[key];
+      return (score !== null && Number.isFinite(score) && score > cfg.a4_rps.periods[key].threshold)
+        || Boolean(bound && (bound.status === 'pass' || bound.status === 'exact')
+          && Number.isFinite(bound.lower) && Number.isFinite(bound.upper)
+          && bound.lower >= 0 && bound.upper <= 100 && bound.lower <= bound.upper
+          && bound.lower > cfg.a4_rps.periods[key].threshold);
+    }),
   };
   const passed = Object.values(reasons).every(Boolean);
   const tags: AlertTag[] = [];

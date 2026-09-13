@@ -1,37 +1,48 @@
 import { z } from 'zod';
+import { canonicalCa } from '../addresses.js';
 import type { Candle } from '../types.js';
+import type { RateLimitStore } from './erwa.js';
+import { resolveGeckoNetwork } from './networks.js';
 
 /**
- * GeckoTerminal OHLCV 客户端 —— K 线的主数据源。
- *
- * 为什么不用二娃的 K 线（docs/03 §2 有完整对比）：
- * - 二娃按链有无数据：bsc/solana/ethereum/base 有，**robinhood（池中最多）、
- *   xlayer/hyperevm/tron/avalanche 完全没有**，而 GeckoTerminal 连 robinhood 都覆盖
- * - 历史深度：15m 给 1000 根 ≈ 10.5 天，二娃只有 96 根 = 24 小时。
- *   这是 A3.1「30m 历史新高」能否成立的关键 —— 24 小时恰好等于 48 根 30m，
- *   会让 A3.1 与 A3.2（最近 48bar 新高）永远同时触发，两条规则塌缩成一条
- * - 免费、不占二娃的每日额度
- *
- * 文档：https://www.geckoterminal.com/dex-api
- * 限流：免费档 30 req/min，故默认 2 秒一次均匀发送。
+ * 免费 GeckoTerminal OHLCV 接入，15m 数据在本地合成其他周期。
+ * 1000 根是单页上限，不能证明已覆盖上市以来全部历史。
+ * 官方公共 API 规范为约 10 次/分钟且可能波动；高于 10 的配置仍夹紧到 10。
+ * https://api.geckoterminal.com/docs/v2/swagger.json
  */
-const RATE_LIMIT_PER_MIN = 30;
+const RATE_LIMIT_PER_MIN = 10;
+const INTERVAL_SECONDS = 15 * 60;
+const MAX_INLINE_COOLDOWN_MS = 60_000;
 export const MAX_BARS = 1000;
 
+const rowSchema = z.tuple([
+  z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER / 1000)
+    .refine((time) => time % INTERVAL_SECONDS === 0),
+  z.number().nonnegative(), z.number().nonnegative(), z.number().nonnegative(),
+  z.number().nonnegative(), z.number().nonnegative(),
+]).refine(([, open, high, low, close]) => high >= Math.max(open, close, low)
+  && low <= Math.min(open, close)
+  // 保留旧行为：全零价格行会被过滤；有正收盘价的行必须有有效 OHLC。
+  && (close === 0 || (open > 0 && low > 0)));
+const tokenSchema = z.object({ address: z.string().trim().min(1) });
 const ohlcvSchema = z.object({
   data: z.object({
-    attributes: z.object({
-      // [ 秒级时间戳, open, high, low, close, volume ]
-      ohlcv_list: z.array(z.tuple([z.number(), z.number(), z.number(), z.number(), z.number(), z.number()])),
-    }),
+    attributes: z.object({ ohlcv_list: z.array(rowSchema) }),
   }),
+  meta: z.object({ base: tokenSchema, quote: tokenSchema }).optional(),
 });
 
 export type GeckoErrorCode = 'GECKO_INPUT' | 'GECKO_HTTP' | 'GECKO_RATE_LIMIT'
   | 'GECKO_VALIDATION' | 'GECKO_NETWORK';
 
+/** 不携带请求地址、原始响应、底层异常或其他供应商凭据。 */
 export class GeckoTerminalError extends Error {
-  constructor(readonly code: GeckoErrorCode, message: string, readonly httpStatus?: number) {
+  constructor(
+    readonly code: GeckoErrorCode,
+    message: string,
+    readonly httpStatus?: number,
+    readonly retryAt?: number,
+  ) {
     super(message);
     this.name = 'GeckoTerminalError';
   }
@@ -41,66 +52,144 @@ export class GeckoTerminalClient {
   readonly #baseUrl: string;
   readonly #minGapMs: number;
   readonly #retryBaseMs: number;
-  #lastRequestAt = 0;
+  readonly #clock: () => number;
+  readonly #sleep: (ms: number) => Promise<void>;
+  #lastRequestAt = -Infinity;
+  #cooldownUntil = 0;
+  #rateLimitStore: RateLimitStore | undefined;
   #queue: Promise<unknown> = Promise.resolve();
 
-  constructor(opts: { baseUrl?: string; requestsPerMinute?: number; retryBaseMs?: number } = {}) {
+  constructor(opts: {
+    baseUrl?: string;
+    requestsPerMinute?: number;
+    retryBaseMs?: number;
+    clock?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {}) {
+    const rpm = opts.requestsPerMinute ?? RATE_LIMIT_PER_MIN;
+    const retryBaseMs = opts.retryBaseMs ?? 5_000;
+    if (!Number.isFinite(rpm) || rpm <= 0 || !Number.isFinite(retryBaseMs) || retryBaseMs < 0) {
+      throw new GeckoTerminalError('GECKO_INPUT', '请求速率或重试间隔无效');
+    }
     this.#baseUrl = opts.baseUrl ?? 'https://api.geckoterminal.com';
-    this.#minGapMs = Math.ceil(60_000 / Math.min(opts.requestsPerMinute ?? RATE_LIMIT_PER_MIN, RATE_LIMIT_PER_MIN));
-    this.#retryBaseMs = opts.retryBaseMs ?? 5_000;
+    this.#minGapMs = Math.ceil(60_000 / Math.min(rpm, RATE_LIMIT_PER_MIN));
+    this.#retryBaseMs = retryBaseMs;
+    this.#clock = opts.clock ?? Date.now;
+    this.#sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /** 使用独立的 Gecko 存储键，不能复用二娃的账号级冷却。 */
+  setRateLimitStore(store: RateLimitStore): void { this.#rateLimitStore = store; }
+
+  #checkCooldown(): void {
+    const until = Math.max(this.#cooldownUntil, this.#rateLimitStore?.getUntil() ?? 0);
+    if (until > this.#clock()) {
+      throw new GeckoTerminalError('GECKO_RATE_LIMIT', 'K 线 API 处于限流冷却期', 429, until);
+    }
   }
 
   async #throttle(): Promise<void> {
     const next = this.#queue.then(async () => {
-      const pause = this.#minGapMs - (Date.now() - this.#lastRequestAt);
-      if (pause > 0) await new Promise((resolve) => setTimeout(resolve, pause));
-      this.#lastRequestAt = Date.now();
+      this.#checkCooldown();
+      const pause = this.#minGapMs - (this.#clock() - this.#lastRequestAt);
+      if (pause > 0) await this.#sleep(pause);
+      this.#checkCooldown();
+      this.#lastRequestAt = this.#clock();
     });
     this.#queue = next.then(() => {}, () => {});
     return next;
   }
 
   /**
-   * 拉 15 分钟 K 线。只拉这一个周期，30m/1h/4h 由 `aggregateCandles` 本地合成 ——
-   * 每个 CA 一次请求，132 个 CA 约 4.4 分钟，远低于 30 分钟的轮询间隔。
+   * 只接受上游确认的无成交填充行，不对网络失败或缺失区间自行补价。
+   * targetCa 明确请求哪一侧的 USD 价格；传入时必须校验响应交易对含该地址。
+   * 旧三参数调用保留兼容；生产采集应始终传入目标 CA。
    */
-  async getCandles15m(network: string, pool: string, limit = MAX_BARS): Promise<Candle[]> {
-    if (!network.trim() || !pool.trim()) throw new GeckoTerminalError('GECKO_INPUT', '网络或交易对为空');
-    await this.#throttle();
+  async getCandles15m(network: string, pool: string, limit = MAX_BARS, targetCa?: string): Promise<Candle[]> {
+    const resolvedNetwork = resolveGeckoNetwork(network);
+    if (!resolvedNetwork || !pool.trim() || !Number.isSafeInteger(limit) || limit <= 0
+      || (targetCa !== undefined && !targetCa.trim())) {
+      throw new GeckoTerminalError('GECKO_INPUT', '网络、交易对、目标地址或数量无效');
+    }
+    const target = targetCa === undefined ? undefined : canonicalCa(targetCa.trim());
     const url = new URL(
-      `/api/v2/networks/${encodeURIComponent(network)}/pools/${encodeURIComponent(pool)}/ohlcv/minute`,
+      `/api/v2/networks/${encodeURIComponent(resolvedNetwork)}/pools/${encodeURIComponent(pool.trim())}/ohlcv/minute`,
       this.#baseUrl,
     );
     url.searchParams.set('aggregate', '15');
     url.searchParams.set('limit', String(Math.min(limit, MAX_BARS)));
-    // 429 要退避重试而非直接放弃：单纯降速无法覆盖突发，
-    // 且一个 CA 拉不到就会整档掉出 RPS 排名（覆盖率阈值判定）。
-    let response: Response | undefined;
+    url.searchParams.set('currency', 'usd');
+    url.searchParams.set('include_empty_intervals', 'true');
+    if (target !== undefined) url.searchParams.set('token', target);
+
+    // 初次请求和最多三次重试都经统一节流；只重试网络错误、429 和 5xx。
     for (let attempt = 0; attempt <= 3; attempt++) {
-      if (attempt > 0) {
-        await new Promise((resolve) => setTimeout(resolve, this.#retryBaseMs * 2 ** (attempt - 1)));
-        await this.#throttle();
-      }
-      try { response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) }); }
-      catch {
+      await this.#throttle();
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          headers: { Accept: 'application/json;version=20230203' },
+          redirect: 'error', signal: AbortSignal.timeout(30_000),
+        });
+      } catch {
         if (attempt === 3) throw new GeckoTerminalError('GECKO_NETWORK', 'K 线请求网络失败或超时');
+        await this.#sleep(this.#retryBaseMs * 2 ** attempt);
         continue;
       }
-      if (response.status !== 429) break;
-      if (attempt === 3) throw new GeckoTerminalError('GECKO_RATE_LIMIT', 'K 线请求持续被限流', 429);
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        const retryable = response.status === 429 || (response.status >= 500 && response.status < 600);
+        let delay = this.#retryBaseMs * 2 ** attempt;
+        if (response.status === 429) {
+          const header = response.headers.get('Retry-After')?.trim();
+          const retryAfter = header && /^\d+(?:\.\d+)?$/.test(header) ? Number(header) * 1000
+            : header ? Date.parse(header) - this.#clock() : 0;
+          if (Number.isFinite(retryAfter)) delay = Math.max(delay, retryAfter);
+          this.#cooldownUntil = Math.max(this.#cooldownUntil, this.#clock() + delay,
+            this.#rateLimitStore?.getUntil() ?? 0);
+          this.#rateLimitStore?.setUntil(this.#cooldownUntil);
+          if (this.#cooldownUntil - this.#clock() > MAX_INLINE_COOLDOWN_MS || attempt === 3) {
+            throw new GeckoTerminalError('GECKO_RATE_LIMIT', 'K 线限流冷却已记录', 429, this.#cooldownUntil);
+          }
+        }
+        if (retryable && attempt < 3) {
+          await this.#sleep(delay);
+          continue;
+        }
+        throw new GeckoTerminalError('GECKO_HTTP', `K 线请求失败（${response.status}）`, response.status);
+      }
+
+      let body: unknown;
+      try { body = await response.json(); }
+      catch {
+        await response.body?.cancel().catch(() => {});
+        throw new GeckoTerminalError('GECKO_VALIDATION', 'K 线响应不是有效 JSON');
+      }
+      const parsed = ohlcvSchema.safeParse(body);
+      if (!parsed.success) throw new GeckoTerminalError('GECKO_VALIDATION', 'K 线响应未通过校验');
+      if (target !== undefined) {
+        const meta = parsed.data.meta;
+        const matchesBase = meta !== undefined && canonicalCa(meta.base.address) === target;
+        const matchesQuote = meta !== undefined && canonicalCa(meta.quote.address) === target;
+        if (matchesBase === matchesQuote) {
+          throw new GeckoTerminalError('GECKO_VALIDATION', 'K 线响应的目标代币身份无法确认');
+        }
+      }
+
+      // 上游倒序，去重后统一为升序。相同时间不同数值不能静默挑选任一版本。
+      const bars = new Map<number, Candle>();
+      for (const [time, open, high, low, close, volume] of parsed.data.data.attributes.ohlcv_list) {
+        if (close <= 0) continue;
+        const openTime = time * 1000;
+        const previous = bars.get(openTime);
+        if (previous && (previous.open !== open || previous.high !== high || previous.low !== low
+          || previous.close !== close || previous.volume !== volume)) {
+          throw new GeckoTerminalError('GECKO_VALIDATION', '同一时刻存在互相冲突的 K 线');
+        }
+        bars.set(openTime, { openTime, open, high, low, close, volume });
+      }
+      return [...bars.values()].sort((a, b) => a.openTime - b.openTime);
     }
-    if (!response) throw new GeckoTerminalError('GECKO_NETWORK', 'K 线请求无响应');
-    if (!response.ok) {
-      throw new GeckoTerminalError('GECKO_HTTP', `K 线请求失败（${response.status}）`, response.status);
-    }
-    const parsed = ohlcvSchema.safeParse(await response.json());
-    if (!parsed.success) throw new GeckoTerminalError('GECKO_VALIDATION', 'K 线响应未通过校验');
-    // 上游按时间倒序返回；统一成升序，并把秒级时间戳转毫秒
-    return parsed.data.data.attributes.ohlcv_list
-      .map(([time, open, high, low, close, volume]) => ({
-        openTime: time * 1000, open, high, low, close, volume,
-      }))
-      .filter((bar) => Number.isFinite(bar.close) && bar.close > 0)
-      .sort((a, b) => a.openTime - b.openTime);
+    throw new GeckoTerminalError('GECKO_NETWORK', 'K 线重试次数耗尽');
   }
 }

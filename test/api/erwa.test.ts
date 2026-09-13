@@ -207,7 +207,8 @@ test('非法 K 线或标的/周期错误在入库前被拦截', async (t) => {
   assert.equal(store.getCandles('test-ca', '15m').length, 1);
 });
 
-test('非 JSON / 网络失败不泄露底层错误，也不重试', async (t) => {
+test('网络失败与非 JSON 响应都不泄露底层错误', async (t) => {
+  const delays = fastTimers(t);
   let calls = 0;
   const stub = t.mock.method(globalThis, 'fetch', async (): Promise<Response> => {
     throw new Error('fake-api-secret');
@@ -217,9 +218,15 @@ test('非 JSON / 网络失败不泄露底层错误，也不重试', async (t) =>
     assert.doesNotMatch(inspect(error), /fake-api-secret/);
     return true;
   });
+  // 网络异常与 5xx 同属临时故障，同样重试 3 次后才放弃
+  assert.equal(calls, 4);
+  assert.deepEqual(delays.filter((delay) => delay >= 500), [500, 1000, 2000]);
+
+  calls = 0;
   stub.mock.mockImplementation(async () => new Response('fake-api-secret'));
   await assert.rejects(makeClient(() => calls++).getTokenUsage(), hasCode('ERWA_VALIDATION'));
-  assert.equal(calls, 2);
+  // 响应格式错误是确定性失败，重试无意义，只请求一次
+  assert.equal(calls, 1);
 });
 
 test('请求串行限流，失败后队列仍可继续', async (t) => {

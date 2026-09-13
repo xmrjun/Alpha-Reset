@@ -13,7 +13,9 @@ export interface StrategyConfig {
   pool: {
     historyDays: number;
     perGroupLimit: number;
-    maxCandidates: number;
+    /** null 表示纳入三个群接口返回的全部去重 CA。 */
+    maxCandidates: number | null;
+    refreshMinutes: number;
     rankBy: 'total_mentions';
   };
   a1_age: { minHours: number };
@@ -27,6 +29,7 @@ export interface StrategyConfig {
     minCoverage: number;
     minRanked: number;
     maxStaleBars: number;
+    inactiveAfterBars: number;
     basisInterval: '15m';
     poolScope: 'observeGroups';
     skipWhenInsufficientHistory: boolean;
@@ -36,8 +39,9 @@ export interface StrategyConfig {
   pullback: { minBarsSinceHigh: number; maxRsi: number };
   supplementary: { volMaPeriod: number; rsiBelow: number };
   indicators: { rsiPeriod: number };
-  kline: { source: 'geckoterminal'; requestsPerMinute: number; bars15m: number };
-  schedule: { mainLoopMinutes: number;
+  kline: { source: 'geckoterminal'; requestsPerMinute: number; bars15m: number;
+    gmgn: { enabled: boolean; requestsPerMinute: number; chains: string[]; refreshMinutes: number; warmupAssets: number } };
+  schedule: { mainLoopMinutes: number; revisionMinutes: number;
     klineRefresh: { range24h: number; range7d: number; range30d: number } };
   quota: { dailyLimit: number; degradeAtPercent: number; haltAtPercent: number };
   alerting: { cooldownBars: number; mergeTagsPerCa: boolean };
@@ -49,7 +53,8 @@ const strategySchema: z.ZodType<StrategyConfig> = z.strictObject({
   pool: z.strictObject({
     historyDays: positiveInteger.max(365),      // board/summary 的 days 上限
     perGroupLimit: positiveInteger.max(200),    // board/summary 的 limit 硬上限，超过会静默返回 0
-    maxCandidates: positiveInteger,
+    maxCandidates: positiveInteger.nullable(),
+    refreshMinutes: positiveInteger.default(5),
     rankBy: z.literal('total_mentions'),
   }),
   a1_age: z.strictObject({ minHours: z.number().nonnegative() }),
@@ -61,6 +66,7 @@ const strategySchema: z.ZodType<StrategyConfig> = z.strictObject({
     a3_4_60m_48bar: z.boolean(), a3_5_4h_ath: z.boolean(), a3_6_4h_48bar: z.boolean(),
   }) }),
   a4_rps: z.strictObject({ minCoverage: z.number().gt(0).max(1), minRanked: positiveInteger.min(2), maxStaleBars: z.number().int().nonnegative(),
+    inactiveAfterBars: positiveInteger,
     basisInterval: z.literal('15m'), poolScope: z.literal('observeGroups'),
     skipWhenInsufficientHistory: z.boolean(), periods: z.strictObject({
       r16: rpsWindow, r56: rpsWindow, r96: rpsWindow, r288: rpsWindow, r672: rpsWindow,
@@ -69,8 +75,16 @@ const strategySchema: z.ZodType<StrategyConfig> = z.strictObject({
   pullback: z.strictObject({ minBarsSinceHigh: positiveInteger, maxRsi: rsiValue }),
   supplementary: z.strictObject({ volMaPeriod: positiveInteger, rsiBelow: rsiValue }),
   kline: z.strictObject({ source: z.literal('geckoterminal'),
-    requestsPerMinute: positiveInteger.max(30), bars15m: positiveInteger.max(1000) }),
-  schedule: z.strictObject({ mainLoopMinutes: positiveInteger, klineRefresh: z.strictObject({
+    requestsPerMinute: positiveInteger.max(30), bars15m: positiveInteger.max(1000),
+    gmgn: z.strictObject({ enabled: z.boolean(), requestsPerMinute: positiveInteger.max(60),
+      chains: z.array(z.enum(['sol', 'bsc', 'base', 'eth', 'arbitrum', 'hyperevm', 'robinhood', 'arc', 'stable']))
+        .refine((items) => new Set(items).size === items.length),
+      refreshMinutes: positiveInteger.max(60), warmupAssets: positiveInteger.max(100),
+    }).refine((value) => !value.enabled || value.chains.length > 0)
+      .default({ enabled: false, requestsPerMinute: 30, chains: ['sol', 'bsc', 'base', 'eth', 'robinhood'],
+        refreshMinutes: 10, warmupAssets: 12 }),
+  }),
+  schedule: z.strictObject({ mainLoopMinutes: positiveInteger, revisionMinutes: positiveInteger.default(3), klineRefresh: z.strictObject({
     range24h: positiveInteger, range7d: positiveInteger, range30d: positiveInteger,
   }) }),
   quota: z.strictObject({ dailyLimit: positiveInteger,
@@ -81,23 +95,6 @@ const strategySchema: z.ZodType<StrategyConfig> = z.strictObject({
 
 export class StrategyConfigError extends Error {
   readonly code = 'STRATEGY_CONFIG_INVALID';
-}
-
-/** 按架构的 summary + 差异化 K 线预算计算，监控/重试另由运行时额度保护。 */
-export function poolCapacity(cfg: StrategyConfig, dailyLimit = cfg.quota.dailyLimit) {
-  const roundsPerDay = Math.ceil(24 * 60 / cfg.schedule.mainLoopMinutes);
-  const summaryCalls = roundsPerDay * new Set(cfg.observeGroups).size;
-  const klineCallsPerCa = Object.values(cfg.schedule.klineRefresh)
-    .reduce((total, rounds) => total + Math.ceil(roundsPerDay / rounds), 0);
-  const maxCandidates = Math.max(0, Math.floor((Math.min(cfg.quota.dailyLimit, dailyLimit) - summaryCalls) / klineCallsPerCa));
-  return { roundsPerDay, summaryCalls, klineCallsPerCa, maxCandidates };
-}
-
-export function assertPoolCapacity(cfg: StrategyConfig, dailyLimit = cfg.quota.dailyLimit): void {
-  const budget = poolCapacity(cfg, dailyLimit);
-  if (cfg.pool.maxCandidates > budget.maxCandidates) {
-    throw new StrategyConfigError(`pool.maxCandidates=${cfg.pool.maxCandidates} 超出配额容量；建议最多 ${budget.maxCandidates} 个 CA`);
-  }
 }
 
 function withoutComments(value: unknown): unknown {
@@ -126,6 +123,5 @@ export function loadStrategy(filename?: string): StrategyConfig {
   catch { throw new StrategyConfigError('无法读取策略配置，或 JSON 格式无效'); }
   const result = strategySchema.safeParse(withoutComments(raw));
   if (!result.success) throw new StrategyConfigError('策略配置缺少必填项、存在未知字段或阈值无效');
-  assertPoolCapacity(result.data);
   return result.data;
 }

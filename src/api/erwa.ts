@@ -2,6 +2,19 @@ import { z } from 'zod';
 import type { BoardPoolItem, Candle, DexSnapshot, Interval, Range } from '../types.js';
 import { canonicalCa } from '../addresses.js';
 
+/**
+ * 请求超时。
+ *
+ * 上游响应时间极不稳定：实测 board/summary 同一参数在 1.4s ~ 45s+ 之间波动，
+ * 且与 limit 无关（limit=20 用 16.7s，limit=200 只用 10.5s），应为服务端实时聚合所致。
+ * 网络层已排除：ping 0% 丢包、RTT 9ms、DNS 50ms、TLS 握手 0.12s。
+ *
+ * 原先认证请求设 15s，会把大量「正常但偏慢」的响应判成网络失败，
+ * 而 usage/board 位于轮次开头，失败即中止 —— 实测 10 轮里 6 轮空转，
+ * 前端表现为「上次刷新 44 分钟前」。
+ */
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export const BOARD_LIMITS = { maxDays: 365, maxItems: 200 } as const;
 
 const intervalByRange: Record<Range, Interval> = { '24h': '15m', '7d': '1h', '30d': '4h', '90d': '1d' };
@@ -226,9 +239,21 @@ export class ErwaClient {
       try {
         response = await fetch(url, {
           headers: { ...(authenticated ? { Authorization: `Bearer ${this.#token}` } : {}), Accept: 'application/json' },
-          signal: AbortSignal.timeout(authenticated ? 15_000 : 60_000), redirect: 'error',
+          // 上游响应时间极不稳定：实测 board/summary 同一参数可在 1.4s ~ 45s+ 之间波动，
+          // 且与 limit 无关（limit=20 用 16.7s，limit=200 只用 10.5s），应为服务端实时聚合所致。
+          // 网络层已排除：ping 0% 丢包、RTT 9ms、DNS 50ms、TLS 0.12s 全部正常。
+          // 原先 15s 的超时会把大量正常但偏慢的请求判成网络失败 ——
+          // 实测 10 轮里 6 轮因此空转，前端表现为「44 分钟未刷新」。
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), redirect: 'error',
         });
       } catch {
+        // 网络异常/超时与 5xx 同属临时故障，必须同等重试。
+        // 此前直接抛出，一次抖动就让整轮作废 —— 实测 10 轮里 6 轮空转，
+        // 全因 usage 或 board 这一步偶发失败（它们在轮次开头，失败即中止）。
+        if (attempt < 3) {
+          await wait(500 * 2 ** attempt);
+          continue;
+        }
         throw new ErwaError('ERWA_NETWORK', 'API 网络请求失败或超时');
       }
       if (!response.ok) {

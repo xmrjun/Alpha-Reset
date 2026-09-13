@@ -9,10 +9,11 @@
   "pool": {
     "historyDays": 5,
     "perGroupLimit": 200,
-    "maxCandidates": 132,
+    "maxCandidates": null,
     "rankBy": "total_mentions",
-    "$comment": "观察池构建：board/summary 按群查 historyDays 天、每群取 perGroupLimit(API 硬上限 200)，三群去重后按 rankBy 降序截断到 maxCandidates。maxCandidates 由配额倒推：144 + 78×M ≤ dailyLimit → M ≤ 132（30 分钟刷新）。改刷新频率或 dailyLimit 时必须同步重算，启动时会自检。",
-    "$comment_historyDays": "board/summary 的时间窗口。**这是增量更新，不是取历史全集**——历史全集由 group_ca_history 提供（npm run backfill 回填）。实测每群返回量：1天最多42、3天最多113、5天最多182、7天已达200触顶。limit 硬上限 200，超出会被静默截断并触发\"达到返回上限\"警告。取 5 天：既覆盖近期全部提及，又留有余量。切忌设成 365 —— 那是把一年数据硬塞进 200 的窗口，必然截断。"
+    "$comment": "观察池按三个群近5天摘要动态替换，规范CA去重。maxCandidates=null纳入全部返回成员，rankBy仅决定展示排序；发现每5分钟独立运行，行情按限速队列轮询，不再使用旧二娃K线配额推导132上限。",
+    "$comment_historyDays": "滚动观察范围，非历史全集。每群摘要最多200条，达到上限时显示来源可能截断；已存历史行情保留，但不自动把全部历史CA并入当前池。",
+    "refreshMinutes": 5
   },
   "a1_age": {
     "minHours": 4,
@@ -41,10 +42,12 @@
     "poolScope": "observeGroups",
     "skipWhenInsufficientHistory": true,
     "minCoverage": 0.75,
-    "$comment_minCoverage": "该档适龄 CA 中取到价格的比例达到此值才计算 RPS，否则整档留空。设为 1 等于要求全池无一缺失 —— 实测永远达不到，会让 A4 恒假、系统永不告警。取 0.75 的依据：实测被剔除样本的市值中位数只有入选者的 52%，即缺失集中在尾部；而剔除尾部会让头部 RPS 分值下降而非上升（分母变小、同名次占比变大），方向是保守的——只会漏报不会误报。",
+    "$comment_minCoverage": "完整适龄集合保持原分母。覆盖达到此比例且样本数足够时，只有排名下界超过阈值才允许通过；全量完整才给精确评分。覆盖不足的数学区间仅供页面观察，不触发规则。",
     "minRanked": 2,
     "maxStaleBars": 4,
-    "$comment_maxStaleBars": "当前价允许偏离基准时刻的 15m 周期数。所有 CA 统一取同一基准时刻的价格（横向排名必须同基准），此值是容差。实测本轮池内：<=2 周期覆盖 79%、<=4 覆盖 82%、<=8 覆盖 85%。落后超过 30 分钟的币本就是长时间无人成交的，那个陈旧价正是它的最后成交价，纳入排名比剔除更真实。取 4（60 分钟）以跨过 minCoverage。",
+    "inactiveAfterBars": 16,
+    "$comment_inactiveAfterBars": "成员在基准 T 之前这么多根 15m 内没有任何已收盘价即判定失活，从全部档位的排名分母中剔除。依据：已验证上游确无新 K 线（池子停止成交）或 DexScreener 返回 pairs:null（该 CA 无任何交易对），不是本地抓取失败——抓取失败会记 GECKO_INPUT/请求错误，不会静默变成失活。剔除方向是保守的：分母变小会让同名次的 RPS 分值下降，只会漏报不会误报。16 根=4 小时零成交，在本池属于无争议的休眠；调小会放宽（1 小时只是流动性差，不等于死盘）。",
+    "$comment_maxStaleBars": "仅保留旧配置兼容；当前RPS要求各CA在共同基准T及窗口起点具有精确已收盘价格，不使用此容差取最近价。",
     "$comment_minRanked": "参与排名的最少 CA 数，少于此值排名无统计意义",
     "periods": {
       "r16": {
@@ -90,7 +93,8 @@
     "$comment": "原始需求未指定 RSI 周期，默认 14，待业务方确认"
   },
   "schedule": {
-    "mainLoopMinutes": 30,
+    "mainLoopMinutes": 60,
+    "revisionMinutes": 3,
     "klineRefresh": {
       "range24h": 1,
       "range7d": 2,
@@ -100,9 +104,24 @@
   },
   "kline": {
     "source": "geckoterminal",
-    "requestsPerMinute": 20,
+    "requestsPerMinute": 8,
     "bars15m": 1000,
-    "$comment": "K 线主源与速率。GeckoTerminal 免费档标称 30 req/min，实测稳态可持续，但短时间连续多轮会触发更长窗口的限制，故默认留余量到 20。bars15m=1000 是上游上限，约 10.5 天——这是 A3.1「30m 历史新高」能成立的前提（二娃只有 24 小时，恰好等于 48 根 30m，会让 A3.1 与 A3.2 塌缩）。30m/1h/4h 均由 15m 本地合成，故每个 CA 每轮只发一次请求。"
+    "$comment": "Gecko公共接口约10次/分钟且会波动，当前设8次/分钟。bars15m=1000是单页上限，约10.4天，不能证明覆盖上市以来全部历史；A3历史新高只对本系统已累积的同一行情序列成立。30m/1h/4h均由15m本地合成，每个CA正常更新只需一次行情请求。",
+    "$comment_rate": "Gecko公共接口约10次/分钟且会波动；本项目配置8次/分钟留余量。重试也计入节流，429按Retry-After持久退避。扩池增加轮询耗时，不提高请求并发。",
+    "gmgn": {
+      "enabled": false,
+      "requestsPerMinute": 30,
+      "chains": [
+        "sol",
+        "bsc",
+        "base",
+        "eth",
+        "robinhood"
+      ],
+      "refreshMinutes": 10,
+      "warmupAssets": 12,
+      "$comment": "独立token/USD序列，近期更新与96根时间切片历史回补共享单一限速；已有Gecko在新T历史门槛达标后逐步切换，新CA可使用已验证GMGN数据。warmupAssets只限制同时预热批次，不限制观察池。"
+    }
   },
   "quota": {
     "dailyLimit": 10500,

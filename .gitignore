@@ -35,3 +35,8 @@ backups/
 config/strategy.local.json
 # 完整业务需求（含策略细节）
 docs/01-需求规格.md
+
+# 发布前的临时备份目录（dist.<标签>-prev-<时间戳>/ 等），绝不入库
+dist.*/
+web/dist.*/
+node_modules.*/

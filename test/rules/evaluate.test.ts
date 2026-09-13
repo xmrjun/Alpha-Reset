@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadStrategy } from '../../src/config/strategy.js';
 import { evaluate, type RuleInput } from '../../src/rules/evaluate.js';
+import { emptyBounds } from '../../src/indicators/observation-rps.js';
 import { emptyScores, HOUR_MS, PERIOD_MS } from '../../src/market.js';
 import { SAMPLE_STRATEGY, candle, poolItem } from '../helpers.js';
 
@@ -145,4 +146,24 @@ test('RSI 等于 60 可回调，等于 50 不加超卖标签；平盘不算下�
   value.candles30m = value.candles30m.map((bar) => ({ ...bar, open: 10, high: 10, low: 10, close: 10 }));
   assert.ok(!evaluate(value).tags.includes('rsi_lt50_30m'));
   assert.ok(!evaluate(value).tags.includes('low_vol_30m'));
+});
+
+test('缺数只允许已证明下界通过A4，跨阈值范围与等号不能发信号', () => {
+  const value = input();
+  value.rpsScores = emptyScores();
+  value.rpsBounds = { ...emptyBounds(), r96: { lower: 86, upper: 96, status: 'pass' } };
+  assert.equal(evaluate(value).reasons.a4, true);
+  assert.ok(evaluate(value).tags.length > 0);
+  for (const bound of [
+    { lower: 80, upper: 90, status: 'unknown' as const },
+    { lower: 85, upper: 95, status: 'pass' as const },
+    { lower: 95, upper: 90, status: 'pass' as const },
+  ]) {
+    value.rpsBounds.r96 = bound;
+    assert.equal(evaluate(value).reasons.a4, false);
+    assert.deepEqual(evaluate(value).tags, []);
+  }
+  value.rpsBounds.r96 = { lower: 86, upper: 96, status: 'pass' };
+  value.cfg.a4_rps.periods.r96.threshold = 86;
+  assert.equal(evaluate(value).reasons.a4, false, '仍须遵守当前配置的严格阈值');
 });

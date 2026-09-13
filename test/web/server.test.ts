@@ -9,7 +9,8 @@ import { createAlertStore } from '../../src/store/alerts.js';
 import { createRuntimeStore, initialRound, pendingMember } from '../../src/store/runtime.js';
 import { loadStrategy } from '../../src/config/strategy.js';
 import { queryAlertGroups } from '../../src/web/queries.js';
-import { HOUR_MS } from '../../src/market.js';
+import { HOUR_MS, emptyScores } from '../../src/market.js';
+import { emptyBounds } from '../../src/indicators/observation-rps.js';
 import { SAMPLE_STRATEGY, candle, poolItem } from '../helpers.js';
 
 const httpFetch = globalThis.fetch;
@@ -38,7 +39,7 @@ async function fixture(t: TestContext) {
   t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); db.close(); });
   t.mock.method(globalThis, 'fetch', async () => { assert.fail('Web 不可访问上游 API'); });
   const address = server.address(); assert.ok(address && typeof address !== 'string');
-  return { get: (path: string, init?: RequestInit) => httpFetch(`http://127.0.0.1:${address.port}${path}`, init) };
+  return { db, cfg, get: (path: string, init?: RequestInit) => httpFetch(`http://127.0.0.1:${address.port}${path}`, init) };
 }
 
 test('观察池筛选、排序、总数和响应字段一致；读取过程零上游请求', async (t) => {
@@ -107,4 +108,33 @@ test('合并记录只有部分标签发送成功时，不显示整组已推送',
   assert.equal(queryAlertGroups(db).items[0]!.pushed, false);
   store.markPushed([pending]);
   assert.equal(queryAlertGroups(db).items[0]!.pushed, true);
+});
+
+test('Web区分完整排名和保守下界，过期时同时停止两类评分', async (t) => {
+  const { get, db } = await fixture(t);
+  const state = createRuntimeStore(db);
+  const round = state.getRound()!;
+  round.members[0]!.rpsScores = emptyScores();
+  round.members[0]!.rpsBounds = { ...emptyBounds(), r16: { lower: 86, upper: 96, status: 'pass' } };
+  round.coverage.r16 = { eligible: 100, available: 90, complete: false, source: 'kline', boundedPassCount: 1 };
+  state.saveRound(round);
+  const stats = await (await get('/api/stats')).json();
+  assert.equal(stats.dataQuality.rpsAvailable, true);
+  assert.deepEqual(stats.dataQuality.rpsReadyKeys, []);
+  assert.deepEqual(stats.dataQuality.rpsBoundedKeys, ['r16']);
+  const body = await (await get('/api/pool')).json();
+  const row = body.items.find((item: { ca: string }) => item.ca === round.members[0]!.pool.ca);
+  assert.equal(row.rpsScores.r16, null);
+  assert.deepEqual(row.rpsBounds.r16, { lower: 86, upper: 96, status: 'pass' });
+  assert.equal(row.reasons.a4, true);
+  round.startedAt -= HOUR_MS;
+  round.completedAt = now - HOUR_MS;
+  state.saveRound(round);
+  assert.equal((await (await get('/api/stats')).json()).dataQuality.rpsAvailable, false);
+  const stale = await (await get('/api/pool')).json();
+  for (const item of stale.items) {
+    assert.equal(item.rpsScores.r16, null);
+    assert.equal(item.rpsBounds, undefined);
+    assert.equal(item.reasons.a4, false);
+  }
 });

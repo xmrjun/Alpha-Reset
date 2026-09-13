@@ -1,6 +1,6 @@
 # Alpha-Reset 项目规范
 
-> 本文件供 AI 编码助手自动读取。动手前先读 `docs/04-架构设计.md`（实现契约）。
+> 本文件供 AI 编码助手自动读取。动手前先读 `docs/04-架构设计.md`（实现契约），当前动态全池增量契约见 `docs/14-动态观察池与限流.md`，GMGN正式接入见 `docs/16-GMGN正式评分.md`；小时评分与轻量推送以 `docs/17-小时评分与轻量推送.md` 为准。
 
 ## 铁律
 
@@ -9,7 +9,7 @@
    违反此条会导致无法测试，直接判定不合格。
 
 2. **Token 绝不出现在代码里**
-   只能 `process.env.ERWA_API_TOKEN` 读取。禁止写进代码、注释、日志、测试夹具、错误信息。
+   上游凭据只能读取环境变量（`process.env.ERWA_API_TOKEN` / `process.env.GMGN_API_KEY`）。禁止写进代码、注释、日志、测试夹具、错误信息。
    测试用假 token（如 `tok_test_fake`）。
 
 3. **契约以 `docs/04-架构设计.md` §4 为准**
@@ -66,5 +66,5 @@ git status --porcelain | grep .env  # 必须无输出（.env 不能进仓库）
 - **单元测试一律 mock fetch**，不要打真实 API（当天配额是共享的，调试几轮就耗光）
 - `board/summary` 的 `limit` 上限 **200**，传 201 **静默返回 0 不报错** —— 客户端必须夹紧到 200
 - `GET /api/v1/group_ca` 的 `group_name` 参数**失效**，别用它做群筛选
-- 观察池按 `cfg.pool.rankBy` 降序截断到 `cfg.pool.maxCandidates`；
-  启动时必须自检 `maxCandidates` 是否超出配额推导值，超了就报错退出
+- 观察池按 `cfg.pool.rankBy` 排序；`cfg.pool.maxCandidates=null` 纳入三个群摘要返回的全部去重 CA。
+  名单每 `cfg.pool.refreshMinutes` 分钟独立更新，不使用旧二娃 K 线次数推导 CA 上限。行情通过持久队列限速，不能为扩大池子提高并发。
