@@ -134,5 +134,13 @@
     "mergeTagsPerCa": true,
     "$comment": "同 (ca,tag) 冷却 4 根对应周期 K 线；同一 CA 多标签合并为一条推送"
   },
+  "outcomes": {
+    "horizonsHours": [
+      1,
+      4,
+      24
+    ],
+    "$comment": "告警事后表现的观察窗口（小时）。每个评分时点 T 下，所有通过 A1∧A2 且当时有收盘价的成员都会登记，alerted 区分告警组与对照组，到期后用同一条序列的收盘价结算收益。纯本地计算，不产生任何上游请求。"
+  },
   "$comment_observeGroups": "示例值。真实观察组配在 config/strategy.local.json（已 gitignore），loadStrategy 会优先读取它。群名需与二娃 board/summary 的 groups[] 完全一致。"
 }

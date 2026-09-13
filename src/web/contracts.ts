@@ -52,6 +52,18 @@ export interface DetailResponse {
   moments: BreakoutMoment[];
   alerts: AlertGroup[];
 }
+/** 告警事后表现。alerted 是触发组，control 是同一时点通过 A1∧A2 但未触发的对照组。 */
+export interface OutcomeGroup { n: number; median: number | null; winRate: number | null }
+export interface OutcomeRow { horizonHours: number; alerted: OutcomeGroup; control: OutcomeGroup }
+export interface OutcomeTagRow { tag: string; horizonHours: number; n: number; median: number | null; winRate: number | null }
+export interface OutcomesResponse {
+  horizons: OutcomeRow[];
+  tags: OutcomeTagRow[];
+  /** 对照组最早出现的时点；早于它的统计只有触发组，不能当作跑赢基准的证据。 */
+  controlSince: number | null;
+  pending: number;
+  settledAt: number | null;
+}
 export interface PoolResponse { items: PoolViewRow[]; total: number; updatedAt: number }
 export interface AlertsResponse { items: AlertGroup[]; total: number }
 export interface StatsResponse {

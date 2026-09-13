@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { RPS_KEYS, TAG_DETAILS, type RpsScores } from '../../src/market.js';
 import type { AlertTag } from '../../src/types.js';
 import type { RpsBounds } from '../../src/indicators/observation-rps.js';
-import type { AlertGroup, DisplayRps, PoolViewRow } from '../../src/web/contracts.js';
+import type { AlertGroup, DisplayRps, OutcomesResponse, PoolViewRow } from '../../src/web/contracts.js';
 import { dateTime, money } from './api.js';
 import { useCopy } from './i18n.js';
 import { dexScreenerUrl, gmgnUrl } from './links.js';
@@ -115,4 +115,54 @@ export function AlertCard({ item }: { item: AlertGroup }) {
     </div>
     <details><summary>{t.alertSnapshot}</summary><pre>{JSON.stringify(item.payload, null, 2)}</pre></details>
   </article>;
+}
+
+const pct = (value: number | null) => value === null ? '—' : (value >= 0 ? '+' : '') + value.toFixed(1) + '%';
+
+export function Outcomes({ data }: { data: OutcomesResponse | null }) {
+  const { t, lang } = useCopy();
+  if (!data || !data.horizons.length) return <p className="rps-waiting">{t.outcomesNoData}</p>;
+  const hasControl = data.horizons.some((row) => row.control.n > 0);
+  return <section className="panel outcomes" aria-label={t.outcomesTitle}>
+    <div className="panel-heading"><h2>{t.outcomesTitle}</h2><span>{t.outcomesHint}</span></div>
+    {!hasControl && <div className="notice" role="status"><span className="notice-symbol">!</span>
+      <div><p>{t.outcomesControlWarn}</p></div></div>}
+    {hasControl && data.controlSince !== null && <p className="outcomes-note">{t.outcomesControlSince(dateTime(data.controlSince, t))}</p>}
+    <div className="table-scroll"><table className="outcomes-table"><thead><tr>
+      <th>{t.outcomesHorizon}</th>
+      <th colSpan={3}>{t.outcomesAlerted}</th>
+      <th colSpan={3}>{t.outcomesControl}</th>
+      <th>{t.outcomesDiff}</th>
+    </tr><tr className="outcomes-subhead">
+      <th />
+      <th>{t.outcomesN}</th><th>{t.outcomesMedian}</th><th>{t.outcomesWin}</th>
+      <th>{t.outcomesN}</th><th>{t.outcomesMedian}</th><th>{t.outcomesWin}</th>
+      <th />
+    </tr></thead><tbody>{data.horizons.map((row) => {
+      const gap = row.alerted.median !== null && row.control.median !== null ? row.alerted.median - row.control.median : null;
+      return <tr key={row.horizonHours}>
+        <td>{row.horizonHours}h</td>
+        <td className="numeric">{row.alerted.n}</td>
+        <td className="numeric">{pct(row.alerted.median)}</td>
+        <td className="numeric">{row.alerted.winRate === null ? '—' : row.alerted.winRate.toFixed(0) + '%'}</td>
+        <td className="numeric">{row.control.n}</td>
+        <td className="numeric">{pct(row.control.median)}</td>
+        <td className="numeric">{row.control.winRate === null ? '—' : row.control.winRate.toFixed(0) + '%'}</td>
+        <td className="numeric">{pct(gap)}</td>
+      </tr>;
+    })}</tbody></table></div>
+    {data.tags.length > 0 && <><h3 className="outcomes-subtitle">{t.outcomesTagTitle}</h3>
+      <div className="table-scroll"><table className="outcomes-table"><thead><tr>
+        <th>{t.outcomesTag}</th><th>{t.outcomesHorizon}</th><th>{t.outcomesN}</th><th>{t.outcomesMedian}</th><th>{t.outcomesWin}</th>
+      </tr></thead><tbody>{data.tags.map((row) => <tr key={row.tag + row.horizonHours}>
+        <td>{lang === 'en' ? TAG_DETAILS[row.tag as AlertTag]?.labelEn ?? row.tag : TAG_DETAILS[row.tag as AlertTag]?.label ?? row.tag}</td>
+        <td className="numeric">{row.horizonHours}h</td>
+        <td className="numeric">{row.n}</td>
+        <td className="numeric">{pct(row.median)}</td>
+        <td className="numeric">{row.winRate === null ? '—' : row.winRate.toFixed(0) + '%'}</td>
+      </tr>)}</tbody></table></div></>}
+    <p className="outcomes-note">{t.outcomesCaveat}
+      {data.pending > 0 && ' · ' + t.outcomesPending(data.pending)}
+      {data.settledAt !== null && ' · ' + t.outcomesSettledAt(dateTime(data.settledAt, t))}</p>
+  </section>;
 }

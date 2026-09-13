@@ -171,3 +171,13 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
   border-radius: 5px;
   white-space: nowrap;
 }
+
+/* 事后表现：两组并排的窄表，窄屏横向滚动而非换行 */
+.outcomes .notice { margin: 0 20px 16px; }
+.outcomes-table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.outcomes-table th, .outcomes-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.outcomes-table thead th { color: var(--text-muted); font-weight: 500; }
+.outcomes-table .outcomes-subhead th { font-size: 10px; padding-top: 0; }
+.outcomes-table td.numeric, .outcomes-table th.numeric { text-align: right; }
+.outcomes-subtitle { margin: 22px 20px 8px; font-size: 12px; }
+.outcomes-note { margin: 14px 20px 18px; font-size: 10px; color: var(--text-muted); line-height: 1.6; }

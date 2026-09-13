@@ -1,9 +1,9 @@
 import { StrictMode, useLayoutEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AlertsResponse, DetailResponse, PoolResponse, PoolViewRow, StatsResponse } from '../../src/web/contracts.js';
+import type { AlertsResponse, DetailResponse, OutcomesResponse, PoolResponse, PoolViewRow, StatsResponse } from '../../src/web/contracts.js';
 import { PERIODS, RPS_KEYS, TAG_DETAILS, type Period } from '../../src/market.js';
 import { dateTime, money, number, relativeTime, useApi } from './api.js';
-import { AlertCard, CopyCa, Empty, ErrorBox, RpsCell, Tags } from './components.js';
+import { AlertCard, CopyCa, Empty, ErrorBox, Outcomes, RpsCell, Tags } from './components.js';
 import { COPY, detectLang, LangContext, persistLang, useCopy, type Lang } from './i18n.js';
 import { PriceChart } from './Chart.js';
 import './style.css';
@@ -178,6 +178,7 @@ function AlertHistory() {
   const [ca, setCa] = useState(''); const [tag, setTag] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState('');
   const [query, setQuery] = useState('');
   const api = useApi<AlertsResponse>(`/api/alerts?limit=200${query}`);
+  const outcomes = useApi<OutcomesResponse>('/api/outcomes');
   return <><div className="page-heading"><div><p className="eyebrow">{t.alertsEyebrow}</p><h1>{t.alertsTitle}</h1><p>{t.alertsLead}</p></div><button onClick={api.reload}>{t.reload}</button></div>
     <section className="panel"><form className="filters alert-filters" onSubmit={(event) => { event.preventDefault();
       const params = new URLSearchParams(); if (ca.trim()) params.set('ca', ca.trim()); if (tag) params.set('tag', tag);
@@ -189,6 +190,7 @@ function AlertHistory() {
       <label><span>{t.alertsFrom}</span><input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
       <label><span>{t.alertsTo}</span><input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} /></label><button className="primary" type="submit">{t.alertsFilter}</button>
     </form></section><ErrorBox message={api.error} retry={api.reload} />
+    <Outcomes data={outcomes.data} />
     <div className="section-heading"><h2>{t.alertsRecords}</h2><span>{t.alertsTotal(api.data?.total ?? 0)}</span></div>
     {api.loading ? <div className="loading" role="status">{t.loadingAlerts}</div> : api.data?.items.length
       ? <div className="alert-list">{api.data.items.map((item) => <AlertCard key={item.id} item={item} />)}</div>

@@ -13,7 +13,7 @@ export function openDatabase(filename = 'data/alpha-reset.sqlite'): StoreDatabas
     db.pragma('busy_timeout = 5000');
     db.pragma('foreign_keys = ON');
     const version = db.pragma('user_version', { simple: true }) as number;
-    if (version > 5) throw new Error('数据库版本高于当前程序支持的版本');
+    if (version > 6) throw new Error('数据库版本高于当前程序支持的版本');
     if (version < 1) {
       db.transaction(() => {
         db.exec(`
@@ -189,6 +189,36 @@ export function openDatabase(filename = 'data/alpha-reset.sqlite'): StoreDatabas
       } finally {
         db.pragma('foreign_keys = ON');
       }
+    }
+    if (version < 6) {
+      db.transaction(() => {
+        db.exec(`
+          -- 告警事后表现。同一张表同时装告警组与对照组：
+          -- 每个评分时点 T 下，所有通过 A1∧A2 且当时有收盘价的成员各记一行，
+          -- alerted 区分两组，从而可以回答"达标但没告警的那批表现如何"。
+          -- entry/exit 必须来自同一条 series（同源），legacy 回填时 series_id 为 NULL。
+          CREATE TABLE IF NOT EXISTS alert_outcomes (
+            ca TEXT NOT NULL,
+            baseline_at INTEGER NOT NULL,
+            horizon_hours INTEGER NOT NULL CHECK (horizon_hours > 0),
+            alerted INTEGER NOT NULL CHECK (alerted IN (0, 1)),
+            tags TEXT NOT NULL DEFAULT '',
+            series_id TEXT REFERENCES market_series(id),
+            entry_price REAL NOT NULL CHECK (entry_price > 0),
+            exit_price REAL CHECK (exit_price IS NULL OR exit_price > 0),
+            return_pct REAL,
+            settled_at INTEGER,
+            recorded_at INTEGER NOT NULL,
+            PRIMARY KEY (ca, baseline_at, horizon_hours)
+          ) WITHOUT ROWID;
+          -- 待结算扫描只关心尚未有结果的行。
+          CREATE INDEX IF NOT EXISTS idx_outcomes_pending
+            ON alert_outcomes(baseline_at, horizon_hours) WHERE return_pct IS NULL AND settled_at IS NULL;
+          CREATE INDEX IF NOT EXISTS idx_outcomes_group
+            ON alert_outcomes(horizon_hours, alerted, baseline_at DESC);
+        `);
+        db.pragma('user_version = 6');
+      })();
     }
     // v5 正式启用前补充切源审计；幂等兼容先前隔离验证产生的 v5 库。
     db.exec(`CREATE TABLE IF NOT EXISTS market_series_switches (

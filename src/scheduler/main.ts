@@ -9,7 +9,7 @@ import { GmgnClient, resolveGmgnChain } from '../api/gmgn.js';
 import { ErwaClient, ErwaError } from '../api/erwa.js';
 import { loadStrategy, StrategyConfigError, type StrategyConfig } from '../config/strategy.js';
 import { calculateObservationRps, emptyBounds } from '../indicators/observation-rps.js';
-import { INTERVAL_MS, MINUTE_MS, PERIODS, PERIOD_MS, RPS_KEYS, closedCandles, contiguousTail, emptyScores } from '../market.js';
+import { HOUR_MS, INTERVAL_MS, MINUTE_MS, PERIODS, PERIOD_MS, RPS_KEYS, closedCandles, contiguousTail, emptyScores } from '../market.js';
 import { aggregateCandles } from '../indicators/merge.js';
 import { rsi } from '../indicators/rsi.js';
 import { sma } from '../indicators/sma.js';
@@ -21,6 +21,7 @@ import { createCandleStore } from '../store/candles.js';
 import { openDatabase, type StoreDatabase } from '../store/db.js';
 import { createMomentStore } from '../store/moments.js';
 import { createSeriesStore, isSupportedMarketSeries, MARKET_SERIES_FORMAT_VERSION, MarketSeriesError, type MarketSeries } from '../store/series.js';
+import { createOutcomeStore } from '../store/outcomes.js';
 import { createPoolStore } from '../store/pool.js';
 import { createRuntimeStore, initialRound, pendingMember, RuntimeStateError, strategyKey, type RoundMember, type RoundSnapshot } from '../store/runtime.js';
 import { readRoundInputs } from '../store/snapshot.js';
@@ -111,6 +112,7 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   const candles = createCandleStore(db);
   const moments = createMomentStore(db);
   const series = createSeriesStore(db);
+  const outcomes = createOutcomeStore(db);
   const log = opts.log ?? ((event) => console.log(JSON.stringify(event)));
   let currentNow = 0;
   const clock = () => opts.clock?.() ?? currentNow;
@@ -773,6 +775,23 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
               marketSeries: member.seriesId ? series.getSeries(member.seriesId) : null,
               rpsBaseline: now, rpsRevision: snapshot.rpsRevision } });
         }
+        // 事后表现登记：告警组与对照组同表。只登记通过 A1∧A2 且在基准 T 有同源收盘价的成员，
+        // 因为只有这批才可能告警，用它们做对照才公平。纯本地写入，不产生上游请求。
+        if (!compatibility) {
+          const entries = [];
+          for (let i = 0; i < inputs.length; i++) {
+            const member = snapshot.members[i]!;
+            if (!member.qualified || !member.seriesId) continue;
+            const bar = inputs[i]!.candles15m.find((candle) => candle.openTime === baseline - INTERVAL_MS['15m']);
+            if (!bar || !Number.isFinite(bar.close) || bar.close <= 0) continue;
+            for (const hours of cfg.outcomes.horizonsHours) {
+              entries.push({ ca: inputs[i]!.ca, baselineAt: baseline, horizonHours: hours,
+                alerted: (member.result?.tags.length ?? 0) > 0, tags: member.result?.tags ?? [],
+                seriesId: member.seriesId, entryPrice: bar.close });
+            }
+          }
+          if (entries.length) outcomes.recordCohort(entries, clock());
+        }
         snapshot.status = snapshot.failures || (!compatibility && Object.values(snapshot.coverage).some((coverage) => !coverage.complete))
           ? 'partial' : 'complete';
         snapshot.completedAt = clock();
@@ -811,6 +830,30 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
     } finally { calculating = false; }
   }
 
+  /** 结算到期的事后收益：退出价必须取自登记时的同一条序列，缺失则记为无结果而非换源。 */
+  function settleOutcomes(now = opts.clock?.() ?? Date.now()): number {
+    let settled = 0;
+    for (const row of outcomes.pending(now)) {
+      const target = row.baselineAt + row.horizonHours * HOUR_MS;
+      let exit: number | null = null;
+      if (row.seriesId) {
+        // 容差 8 根：稀疏成交的资产在目标时刻可能无成交，取此前最近一根已收盘价。
+        for (let back = 0; back < 8 && exit === null; back++) {
+          const bar = seriesCloseAt(row.seriesId, target - back * INTERVAL_MS['15m']);
+          if (bar !== null) exit = bar;
+        }
+      }
+      if (outcomes.settle(row, exit, now)) settled++;
+    }
+    return settled;
+  }
+  const closeAtStmt = db.prepare(`SELECT close FROM series_candles
+    WHERE series_id = ? AND interval = '15m' AND open_time = ?`);
+  function seriesCloseAt(seriesId: string, closeTime: number): number | null {
+    const row = closeAtStmt.get(seriesId, closeTime - INTERVAL_MS['15m']) as { close: number } | undefined;
+    return row && Number.isFinite(row.close) && row.close > 0 ? row.close : null;
+  }
+
   /** T 是统一收盘基准。重复调用只在同 T 的端点输入变化时发布下一修订。 */
   async function calculateAt(now: number): Promise<RoundReport | null> { return calculate(now, false); }
 
@@ -825,7 +868,7 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
       return await calculate(now, true) ?? report;
     } finally { combinedRunning = false; }
   }
-  return { runOnce, collectOnce, discoverOnce, collectKnownPoolOnce, calculateAt, stop: () => { stopping = true; } };
+  return { runOnce, collectOnce, discoverOnce, collectKnownPoolOnce, calculateAt, settleOutcomes, stop: () => { stopping = true; } };
 }
 
 async function main() {
@@ -893,6 +936,9 @@ async function main() {
         continue;
       }
       try { await scheduler.collectKnownPoolOnce(started); } catch { console.error('行情采集失败'); }
+      // 结算只读本地 K 线，不占用任何上游限速预算。
+      try { const n = scheduler.settleOutcomes(Date.now()); if (n) console.log(JSON.stringify({ event: 'outcomes_settled', count: n })); }
+      catch { console.error('事后收益结算失败'); }
       if (closing) break;
       // 同一固定 T 允许迟到行情补齐；无新增端点的请求被输入指纹去重。
       void requestCalculation(baseline());

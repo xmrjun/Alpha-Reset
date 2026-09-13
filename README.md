@@ -32,7 +32,7 @@ A production monitoring system that watches tokens discussed in private trading 
 
 A token alerts only when **A1 ∧ A2 ∧ A3 ∧ A4** all hold: old enough, inside the size band, pulled back from a recorded high, and strong on relative-strength ranking.
 
-## Three design choices worth reading the code for
+## Four design choices worth reading the code for
 
 ### 1. Rules are pure functions, enforced by grep
 
@@ -63,6 +63,16 @@ A watchlist accumulates dead tokens, and they drag coverage below the threshold 
 - **no history** → excluded only on `dexStatus === 'absent'`, meaning DexScreener answered `HTTP 200` with `pairs: null`
 
 `dexStatus` distinguishes `absent` (upstream answered, no market exists) from `error` (the request failed). A collection outage produces `error`, keeps members in the denominator, drops coverage, and correctly blocks alerting instead of quietly shrinking the pool. See [docs/18](docs/18-失活剔除与无市场判定.md).
+
+### 4. The system measures its own signals against a control
+
+Every scoring timestamp records **all members that passed A1∧A2 and had a close price** — not just the ones that alerted. `alerted` separates the two groups in the same table, so the honest question can be asked: *did the triggered tokens do better than the qualifying tokens that did not trigger?*
+
+Forward returns at 1h / 4h / 24h are settled later from local candles, using the **same series** both endpoints came from. Zero upstream requests. Results are at `/api/outcomes` and on the alert-history page.
+
+The first thing this measurement did was contradict an impression. Over 94 historical alert events the triggered group's median 1h return was **−1.2%**, not the win it looked like from eyeballing recent deliveries. It also showed all three `low_vol_*` tags with negative medians while `60m_2d_high_pullback` and `rsi_lt50_60m` were the only consistently positive ones.
+
+Those numbers are **not yet actionable**: 17 assets, top three accounting for half the sample, three days, no exit rule, and — critically — the control group is empty for all historical rounds because the qualifying set per round was never persisted. The UI says so in place of the comparison rather than letting an empty control read as outperformance. Control data accrues from the moment the feature shipped.
 
 ## Other properties
 

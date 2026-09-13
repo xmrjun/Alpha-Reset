@@ -76,7 +76,7 @@ async function pageFixture(t, mobile = false, locale = 'zh-CN') {
   const responses = new Map();
   const heldPoolResponses = [];
   const state = { failPool: false, empty: false, bounded: false, cached: false, running: false,
-    stale: false, firstRound: false, boardComplete: true, processed: 2, succeeded: 1, failed: 1, fresh: 1, holdPool: false };
+    stale: false, firstRound: false, boardComplete: true, processed: 2, succeeded: 1, failed: 1, fresh: 1, holdPool: false, outcomes: null };
   page.on('pageerror', (error) => errors.push(error.message));
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url()); requests.push(url);
@@ -123,6 +123,8 @@ async function pageFixture(t, mobile = false, locale = 'zh-CN') {
         volumeMa: candles.slice(38).map((bar) => ({ openTime: bar.openTime, value: 1300 })),
         parameters: { rsiPeriod: 14, volMaPeriod: 39, rsiBelow: 50, maxRsi: 60 } },
         moments: [{ moment: 1, barTime: candles[50].openTime, price: candles[50].high }], alerts: [alert] };
+    } else if (url.pathname === '/api/outcomes') {
+      body = state.outcomes ?? { horizons: [], tags: [], controlSince: null, pending: 0, settledAt: null };
     } else return route.fulfill({ status: 404, json: { error: 'NOT_FOUND' } });
     responses.set(url.pathname, structuredClone(body));
     if (state.holdPool && url.pathname === '/api/pool') {
@@ -660,5 +662,56 @@ test('中文浏览器默认中文，且英文切换后详情与告警页同样�
   await page.goto(`${origin}/ca/asset-a`);
   await expect(page.getByText('Asset info')).toBeVisible();
   await expect(page.getByText('Market source')).toBeVisible();
+  assert.deepEqual(errors, []);
+});
+
+const outcomesWithControl = {
+  horizons: [
+    { horizonHours: 1, alerted: { n: 12, median: 4.4, winRate: 61 }, control: { n: 88, median: -0.6, winRate: 37 } },
+    { horizonHours: 24, alerted: { n: 5, median: -25.5, winRate: 20 }, control: { n: 40, median: -10.6, winRate: 31 } },
+  ],
+  tags: [{ tag: 'low_vol_30m', horizonHours: 1, n: 9, median: -1.1, winRate: 49 }],
+  controlSince: Date.parse('2026-09-13T00:00:00Z'), pending: 3, settledAt: Date.parse('2026-09-13T12:00:00Z'),
+};
+const outcomesNoControl = {
+  horizons: [{ horizonHours: 1, alerted: { n: 93, median: -1.2, winRate: 46 }, control: { n: 0, median: null, winRate: null } }],
+  tags: [], controlSince: null, pending: 0, settledAt: Date.parse('2026-09-13T12:00:00Z'),
+};
+
+test('事后表现展示触发组与对照组及中位差，标签行按语言取文案', async (t) => {
+  const { page, errors, state } = await pageFixture(t);
+  state.outcomes = outcomesWithControl;
+  await page.goto(`${origin}/alerts`);
+  const table = page.locator('.outcomes-table').first();
+  await expect(table).toContainText('1h');
+  await expect(table.locator('tbody tr').first().locator('td')).toHaveText(['1h', '12', '+4.4%', '61%', '88', '-0.6%', '37%', '+5.0%']);
+  await expect(table.locator('tbody tr').nth(1).locator('td')).toHaveText(['24h', '5', '-25.5%', '20%', '40', '-10.6%', '31%', '-14.9%']);
+  // 有对照组时显示起始时点，不显示缺失告示
+  await expect(page.locator('.outcomes')).toContainText('对照组数据自');
+  await expect(page.locator('.outcomes .notice')).toHaveCount(0);
+  await expect(page.locator('.outcomes')).toContainText('3 条待结算');
+  await expect(page.locator('.outcomes-table').nth(1)).toContainText('低量30分钟');
+  await page.getByRole('button', { name: /Switch language/ }).click();
+  await expect(page.locator('.outcomes-table').nth(1)).toContainText('Low volume 30m');
+  assert.deepEqual(errors, []);
+});
+
+test('对照组为空时明确告警不可比，不把触发组数字当成跑赢基准', async (t) => {
+  const { page, errors, state } = await pageFixture(t);
+  state.outcomes = outcomesNoControl;
+  await page.goto(`${origin}/alerts`);
+  await expect(page.locator('.outcomes .notice')).toContainText('对照组尚无样本');
+  await expect(page.locator('.outcomes')).not.toContainText('对照组数据自');
+  // 中位差留空而不是拿 0 当基准
+  await expect(page.locator('.outcomes-table').first().locator('tbody tr').first().locator('td')).toHaveText(['1h', '93', '-1.2%', '46%', '0', '—', '—', '—']);
+  assert.deepEqual(errors, []);
+});
+
+test('尚无已结算收益时显示等待文案，不渲染空表', async (t) => {
+  const { page, errors, state } = await pageFixture(t);
+  state.outcomes = { horizons: [], tags: [], controlSince: null, pending: 6, settledAt: null };
+  await page.goto(`${origin}/alerts`);
+  await expect(page.locator('.rps-waiting')).toContainText('尚无已结算的事后收益');
+  await expect(page.locator('.outcomes-table')).toHaveCount(0);
   assert.deepEqual(errors, []);
 });

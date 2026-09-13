@@ -45,6 +45,7 @@ export interface StrategyConfig {
     klineRefresh: { range24h: number; range7d: number; range30d: number } };
   quota: { dailyLimit: number; degradeAtPercent: number; haltAtPercent: number };
   alerting: { cooldownBars: number; mergeTagsPerCa: boolean };
+  outcomes: { horizonsHours: number[] };
 }
 
 const strategySchema: z.ZodType<StrategyConfig> = z.strictObject({
@@ -72,6 +73,8 @@ const strategySchema: z.ZodType<StrategyConfig> = z.strictObject({
       r16: rpsWindow, r56: rpsWindow, r96: rpsWindow, r288: rpsWindow, r672: rpsWindow,
     }) }),
   indicators: z.strictObject({ rsiPeriod: positiveInteger }),
+  outcomes: z.strictObject({ horizonsHours: z.array(positiveInteger).min(1).max(8)
+    .refine((list) => new Set(list).size === list.length, '事后观察窗口不能重复') }),
   pullback: z.strictObject({ minBarsSinceHigh: positiveInteger, maxRsi: rsiValue }),
   supplementary: z.strictObject({ volMaPeriod: positiveInteger, rsiBelow: rsiValue }),
   kline: z.strictObject({ source: z.literal('geckoterminal'),

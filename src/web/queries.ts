@@ -7,7 +7,8 @@ import { latestObservationRound, readRpsDisplay, verifiedCalculationSeries, veri
 import { isRoundFresh, strategyKey } from '../store/runtime.js';
 import type { StoreDatabase } from '../store/db.js';
 import type { AlertFilter, AlertRow } from '../store/alerts.js';
-import type { AlertGroup, AlertsResponse } from './contracts.js';
+import type { AlertGroup, AlertsResponse, OutcomesResponse } from './contracts.js';
+import { createOutcomeStore } from '../store/outcomes.js';
 
 // 只发布白名单字段；运行状态中的内部错误、地址和凭据不会出现在 Web 快照。
 const gmgnStatusSchema = z.object({
@@ -146,4 +147,16 @@ export function queryAlertGroups(db: StoreDatabase, filter: AlertFilter = {}): A
   }
   for (const [key, group] of map) group.pushed = group.tags.every((tag) => pushedTags.get(key)!.has(tag));
   return { items: [...map.values()], total };
+}
+
+/** 只读聚合；不触发任何计算或上游请求。since 之前的样本不计入。 */
+export function queryOutcomes(db: StoreDatabase, since = 0): OutcomesResponse {
+  const store = createOutcomeStore(db);
+  const control = db.prepare(`SELECT MIN(baseline_at) AS first FROM alert_outcomes
+    WHERE alerted = 0 AND return_pct IS NOT NULL`).get() as { first: number | null };
+  const pending = db.prepare(`SELECT COUNT(*) AS n FROM alert_outcomes
+    WHERE return_pct IS NULL AND settled_at IS NULL`).get() as { n: number };
+  const settled = db.prepare('SELECT MAX(settled_at) AS at FROM alert_outcomes').get() as { at: number | null };
+  return { horizons: store.stats(since), tags: store.tagStats(since),
+    controlSince: control.first, pending: pending.n, settledAt: settled.at };
 }

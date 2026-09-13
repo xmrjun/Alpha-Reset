@@ -56,7 +56,7 @@ test('v3 → v5 增量迁移保留全部旧数据，绝不自动认领旧行情'
   old.close();
   const migrated = openDatabase(filename);
   try {
-    assert.equal(migrated.pragma('user_version', { simple: true }), 5);
+    assert.equal(migrated.pragma('user_version', { simple: true }), 6);
     assert.deepEqual(tables.map((table) => migrated.prepare(`SELECT * FROM ${table}`).all()), before);
     assert.equal(createSeriesStore(migrated).getActive('eth', ca), null);
     assert.deepEqual(migrated.prepare('SELECT * FROM market_series').all(), []);

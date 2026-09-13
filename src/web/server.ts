@@ -14,7 +14,7 @@ import { isRoundFresh, strategyKey } from '../store/runtime.js';
 import { readRoundInputs } from '../store/snapshot.js';
 import { createUsageStore } from '../store/usage.js';
 import type { AlertTag } from '../types.js';
-import { dataQuality, queryAlertGroups } from './queries.js';
+import { dataQuality, queryAlertGroups, queryOutcomes } from './queries.js';
 import { latestObservationRound, readRpsDisplay, verifiedDisplaySeries, verifiedCalculationSeries } from './rps-display.js';
 import { createWebReadModel, type WebReadContext } from './read-context.js';
 import { attachLiveFeed } from './live.js';
@@ -124,6 +124,10 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
           limit: limitSchema }).refine((q) => q.from === undefined || q.to === undefined || q.from <= q.to).parse(raw);
         send(200, queryAlertGroups(db, { ...query, ...(query.tag ? { tag: query.tag as AlertTag } : {}) } as Parameters<typeof queryAlertGroups>[1]));
         return;
+      }
+      if (url.pathname === '/api/outcomes') {
+        const query = z.object({ since: z.coerce.number().int().nonnegative().optional() }).parse(raw);
+        send(200, db.transaction(() => queryOutcomes(db, query.since ?? 0))()); return;
       }
       if (url.pathname === '/api/pool') {
         const query = z.object({ chain: z.string().optional(), group: z.string().optional(), hit: z.enum(['0', '1']).optional(),
