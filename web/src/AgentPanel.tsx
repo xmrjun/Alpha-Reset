@@ -3,6 +3,7 @@ import {
   AGENT_MODELS, AgentError, DEFAULT_MODEL, MAX_ROUNDS, MODEL_CONTEXT, loadAgentTools, runAgent,
   type AgentStatus, type AgentTool, type ChatMessage,
 } from './agent.js';
+import { CHAT_STORAGE, decodeHistory, encodeHistory } from './chat-storage.js';
 import { useCopy } from './i18n.js';
 
 const KEY_STORAGE = 'alpha-orbio-key';
@@ -64,7 +65,7 @@ export function AgentPanel({ standalone = false }: { standalone?: boolean } = {}
   const [tools, setTools] = useState<AgentTool[] | null>(null);
   const [toolsError, setToolsError] = useState<AgentError | null>(null);
   const [toolsVersion, setToolsVersion] = useState(0);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => decodeHistory(readStored(CHAT_STORAGE)));
   const [input, setInput] = useState('');
   const [status, setStatus] = useState<AgentStatus>({ kind: 'idle' });
   const [running, setRunning] = useState(false);
@@ -91,6 +92,9 @@ export function AgentPanel({ standalone = false }: { standalone?: boolean } = {}
 
   // 新消息或状态变化后滚到底，否则工具调用过程会在可视区外面悄悄跑完。
   useEffect(() => { logEnd.current?.scrollIntoView({ block: 'nearest' }); }, [messages, status]);
+
+  // 导航栏是普通 <a>，切一次页面就是整页重载，对话不落盘会在切走的瞬间丢光。
+  useEffect(() => { writeStored(CHAT_STORAGE, encodeHistory(messages)); }, [messages]);
 
   // 实测一轮「工具调用 + 最终回答」要 30~60 秒，没有走秒的等待态用户会以为页面卡死。
   useEffect(() => {
