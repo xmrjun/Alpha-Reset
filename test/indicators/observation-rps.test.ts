@@ -15,7 +15,7 @@ const near = (actual: number, expected: number) => assert.ok(Math.abs(actual - e
 
 function member(ca: string, change = 0, baseline = NOW): ObservationRpsMember {
   return {
-    ca, listedAt: 0, candles60m: [],
+    ca, listedAt: 0, candles60m: [], liquidity: 50_000,
     candles15m: [
       ...RPS_KEYS.map((key) => candle(baseline - (defaults.a4_rps.periods[key].bars + 1) * STEP, 100)),
       candle(baseline - STEP, 100 + change),
@@ -129,7 +129,7 @@ test('起点或终点缺失分别计数，不能把缺失成员从适龄分母�
   noCurrent.candles15m = noCurrent.candles15m.filter((bar) => bar.openTime !== NOW - STEP);
   const result = calculateObservationRps([member('a', 20), member('b', 10), noStart, noCurrent], NOW, cfg);
   assert.deepEqual(result.coverage.r16, { eligible: 4, available: 2, complete: false, source: 'kline',
-    unknownAge: 0, inactive: 0, ageConfirmedByHistory: 0, missingStart: 1, missingCurrent: 1, boundedPassCount: 0 });
+    unknownAge: 0, inactive: 0, illiquid: 0, ageConfirmedByHistory: 0, missingStart: 1, missingCurrent: 1, boundedPassCount: 0 });
   assert.deepEqual(result.bounds.get('a')!.r16, { lower: 25, upper: 75, status: 'fail' });
   assert.equal(result.scores.get('a')!.r16, null);
 });
@@ -566,4 +566,20 @@ test('失活阈值来自配置，调大即可让原本被剔除的成员回到�
   const result = calculateObservationRps(members, NOW, relaxed);
   assert.equal(result.coverage.r16.inactive, 0);
   assert.equal(result.coverage.r16.eligible, 3);
+});
+
+test('流动性低于 A2 下限的成员不进入排名分母，但需有正面证据才剔除', () => {
+  const cfg = config();
+  const rich = member('rich', 20);
+  const poor = member('poor', 10);
+  // 已验证流动性不足：一笔小单就能造成极端涨幅，纳入相对排名只会污染分母。
+  poor.liquidity = cfg.a2_scale.liquidityMin - 1;
+  const unknown = member('unknown', 30);
+  unknown.liquidity = null;   // 没拿到流动性数据 ≠ 流动性不足，不能凭猜测缩小分母
+
+  const result = calculateObservationRps([rich, poor, unknown], NOW, cfg);
+
+  assert.equal(result.coverage.r16.illiquid, 1, '只剔除已证实流动性不足的那一个');
+  assert.equal(result.coverage.r16.eligible, 2, 'rich 与未知流动性的 unknown 都应留在分母');
+  assert.equal(result.scores.get('poor')!.r16, null, '被剔除者不产出评分');
 });

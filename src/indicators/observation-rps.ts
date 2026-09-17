@@ -8,6 +8,8 @@ export interface ObservationRpsMember extends RpsMember {
   // 保留输入兼容；五档排名均不再使用滚动行情快照。
   dex: DexSnapshot | null;
   dexStatus: 'pending' | 'ok' | 'error' | 'absent';
+  /** 权威流动性来自 board/summary（与 A2 同源），不是 Dex 快照——后者多数成员为 null。 */
+  liquidity: number | null;
 }
 
 export interface RpsBound {
@@ -25,6 +27,13 @@ export interface ObservationRpsCoverage {
   unknownAge: number;
   /** 基准前 inactiveAfterBars 根内无任何已收盘价，已从分母剔除的成员数。 */
   inactive: number;
+  /**
+   * 已验证流动性低于 A2 下限、被排除出排名 universe 的成员数。
+   * 这类代币一笔小单即可造成极端涨幅，其"涨幅"无法与正常标的相提并论；
+   * 留在分母里既污染排名，又因长期无成交而拉低覆盖率。
+   * 只在拿到 Dex 快照且确实低于门槛时剔除——快照缺失不构成证据，不得据此缩小分母。
+   */
+  illiquid: number;
   /** Dex 日期不能证明该窗口存续，但已验证历史可以证明的成员数。 */
   ageConfirmedByHistory: number;
   missingCurrent: number;
@@ -63,6 +72,7 @@ export function calculateObservationRps(members: ObservationRpsMember[], now: nu
     const target = baseline - cfg.a4_rps.periods[key].bars * INTERVAL_MS['15m'];
     let unknownAge = 0;
     let inactive = 0;
+    let illiquid = 0;
     let ageConfirmedByHistory = 0;
     const eligible = members.filter((member) => {
       // 失活剔除只依据已验证的证据，绝不因为「本地还没抓到」就缩小分母：
@@ -70,6 +80,10 @@ export function calculateObservationRps(members: ObservationRpsMember[], now: nu
       //   无历史 → 仅当上游明确应答「该 CA 无任何交易对」(dexStatus=absent) 才剔除。
       // 采集中断只会让 dexStatus 变成 error/pending，成员仍留在分母，
       // 覆盖率随之下降并触发 minCoverage 失败，不会被误判成个别资产失活。
+      // 流动性门槛先于活跃度判断：它界定的是"谁属于可比较的排名 universe"。
+      const liquidity = member.liquidity;
+      if (typeof liquidity === 'number' && Number.isFinite(liquidity)
+        && liquidity < cfg.a2_scale.liquidityMin) { illiquid++; return false; }
       const { lastCloseTime } = history.get(member.ca)!;
       const hasHistory = lastCloseTime > -Infinity;
       if (hasHistory ? lastCloseTime < staleBefore : member.dexStatus === 'absent') { inactive++; return false; }
@@ -106,7 +120,7 @@ export function calculateObservationRps(members: ObservationRpsMember[], now: nu
     const usable = changes.size >= cfg.a4_rps.minRanked && ratio >= cfg.a4_rps.minCoverage;
     const complete = usable && unknownAge === 0 && changes.size === eligible.length;
     const item: ObservationRpsCoverage = { eligible: possibleEligible, available: changes.size,
-      complete, source: 'kline', unknownAge, inactive, ageConfirmedByHistory, missingCurrent, missingStart, boundedPassCount: 0 };
+      complete, source: 'kline', unknownAge, inactive, illiquid, ageConfirmedByHistory, missingCurrent, missingStart, boundedPassCount: 0 };
     coverage[key] = item;
     const exactScores = complete ? rps(changes) : null;
     for (const [ca, change] of changes) {
