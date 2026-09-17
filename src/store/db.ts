@@ -13,7 +13,7 @@ export function openDatabase(filename = 'data/alpha-reset.sqlite'): StoreDatabas
     db.pragma('busy_timeout = 5000');
     db.pragma('foreign_keys = ON');
     const version = db.pragma('user_version', { simple: true }) as number;
-    if (version > 6) throw new Error('数据库版本高于当前程序支持的版本');
+    if (version > 7) throw new Error('数据库版本高于当前程序支持的版本');
     if (version < 1) {
       db.transaction(() => {
         db.exec(`
@@ -219,6 +219,47 @@ export function openDatabase(filename = 'data/alpha-reset.sqlite'): StoreDatabas
         `);
         db.pragma('user_version = 6');
       })();
+    }
+    if (version < 7) {
+      // 表级 CHECK 无法 ALTER，只能重建。与 v5 同样的处理：暂关外键、整表拷贝、
+      // 提交前校验全部外键；子表不动，seriesId 不变，历史与告警全部保留。
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.transaction(() => {
+          db.exec(`
+            CREATE TABLE market_series_v7 (
+              id TEXT PRIMARY KEY,
+              source TEXT NOT NULL CHECK (source IN ('geckoterminal', 'erwa', 'gmgn', 'binance')),
+              scope TEXT NOT NULL CHECK (scope IN ('pool', 'token')),
+              network TEXT NOT NULL,
+              ca TEXT NOT NULL,
+              pool_address TEXT,
+              currency TEXT NOT NULL CHECK (currency = 'usd'),
+              format_version INTEGER NOT NULL CHECK (format_version > 0),
+              created_at INTEGER NOT NULL,
+              activated_at INTEGER,
+              active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)),
+              CHECK ((source IN ('geckoterminal', 'erwa') AND scope = 'pool'
+                AND pool_address IS NOT NULL AND length(trim(pool_address)) > 0)
+                OR (source IN ('gmgn', 'binance') AND scope = 'token' AND pool_address IS NULL)),
+              UNIQUE (source, scope, network, ca, pool_address, currency, format_version)
+            ) WITHOUT ROWID;
+            INSERT INTO market_series_v7 SELECT id, source, scope, network, ca, pool_address,
+              currency, format_version, created_at, activated_at, active FROM market_series;
+            DROP TABLE market_series;
+            ALTER TABLE market_series_v7 RENAME TO market_series;
+            CREATE UNIQUE INDEX idx_market_series_active
+              ON market_series(network, ca) WHERE active = 1;
+            -- NULL 不参与普通 UNIQUE 比较；token 序列按来源各自唯一。
+            CREATE UNIQUE INDEX idx_market_series_token
+              ON market_series(source, network, ca, currency, format_version) WHERE scope = 'token';
+          `);
+          if ((db.pragma('foreign_key_check') as unknown[]).length) throw new Error('行情序列 v7 迁移外键校验失败');
+          db.pragma('user_version = 7');
+        })();
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
     }
     // v5 正式启用前补充切源审计；幂等兼容先前隔离验证产生的 v5 库。
     db.exec(`CREATE TABLE IF NOT EXISTS market_series_switches (

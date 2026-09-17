@@ -293,3 +293,41 @@ test('空或只有未收盘bar的GMGN候选不是成熟历史，不能撤下可�
     assert.equal(f.series.getSeries(candidate.id)!.active, false);
   }
 });
+
+test('采集循环的最小间隔可配置，默认仍是 1 秒', async () => {
+  // 采集器每次都要求立刻再来一次，实际节奏就由循环的最小间隔决定。
+  // Binance 的 600 次/分钟预算被写死的 1 秒地板压成 60 次/分钟，历史回补会慢几倍。
+  const run = async (minGapMs?: number) => {
+    let now = T; let stopped = false; let calls = 0;
+    const sleeps: number[] = [];
+    await runGmgnCollectionLoop({
+      intervalMs: SLOT, clock: () => now, stopped: () => stopped,
+      collector: { async collectOnce() { calls++; if (calls >= 4) stopped = true; return { attempted: true, changed: false, nextAt: now }; } },
+      requestCalculation: async () => {},
+      sleep: async (ms) => { sleeps.push(ms); now += ms; },
+      ...(minGapMs === undefined ? {} : { minGapMs }),
+    });
+    return sleeps;
+  };
+  assert.deepEqual(await run(), [1_000, 1_000, 1_000], '不传时必须保持原有 1 秒节奏');
+  assert.deepEqual(await run(200), [200, 200, 200], 'minGapMs 应能放开最小间隔');
+});
+
+test('旧来源同样缺失的窗口起点不阻塞换源', () => {
+  // 低流动性代币在某个精确 15m 区间没有成交，两个来源都不会有那根收盘价。
+  // 实测 62 个被判缺起点的成员里 55 个属于这种情况：该档位在旧来源同样算不出来，
+  // 要求候选补上一根连现任都没有的 K 线是不可能满足的条件，只会把迁移永久卡死。
+  const cfg = loadStrategy(SAMPLE_STRATEGY);
+  const bars = history();
+  const gapIndex = bars.length - (cfg.a4_rps.periods.r672.bars + 1);
+  const holed = bars.filter((_, index) => index !== gapIndex);
+
+  const both = gmgnReadiness({ candidate: frames(holed), previous: frames(holed), listedAt: null, now: T, cfg });
+  assert.deepEqual(both.missingStarts, [], '两边都没有的起点不应记为缺失');
+  assert.equal(both.historyReady, true);
+
+  // 反向保护：旧来源有而候选没有，仍然必须阻塞，否则换源会真的丢掉该档位。
+  const onlyCandidateMissing = gmgnReadiness({ candidate: frames(holed), previous: frames(bars), listedAt: null, now: T, cfg });
+  assert.deepEqual(onlyCandidateMissing.missingStarts, ['r672'], '候选独缺时必须阻塞');
+  assert.equal(onlyCandidateMissing.historyReady, false);
+});

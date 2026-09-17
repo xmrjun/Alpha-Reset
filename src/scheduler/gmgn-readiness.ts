@@ -47,6 +47,9 @@ export function gmgnReadiness(input: { candidate: SeriesHistory; previous: Serie
   if (!candidatePrices.size) return result;
   // 没有既存可用行情的新资产可先绑定真实历史；缺少端点仍由全池 RPS 保留为未知。
   if (!previousPrices.size) return { ...result, ready: true, historyReady: true };
+  // 候选自身最早的已知收盘时刻，用于区分「区间内无成交」与「深度不足」。
+  let candidateFirst = Infinity;
+  for (const stamp of candidatePrices.keys()) candidateFirst = Math.min(candidateFirst, stamp);
   let firstKnown = Infinity;
   for (const stamp of candidatePrices.keys()) firstKnown = Math.min(firstKnown, stamp);
   for (const stamp of previousPrices.keys()) firstKnown = Math.min(firstKnown, stamp);
@@ -55,7 +58,15 @@ export function gmgnReadiness(input: { candidate: SeriesHistory; previous: Serie
     const target = baseline - cfg.a4_rps.periods[key].bars * INTERVAL_MS['15m'];
     // 未知上市年龄可能适龄，不能凭历史回补得少就跳过长窗口。
     const required = !knownListing || listedAt! <= target || firstKnown <= target;
-    if (required && !candidatePrices.has(target)) result.missingStarts.push(key);
+    // 区分两种「缺起点」：
+    //   覆盖范围内的空洞 —— 该 15m 区间没有成交，任何来源都不会有这根收盘价。
+    //     旧来源同样缺时不构成阻塞，否则等于要求候选补上一根连现任都拿不出的 K 线，
+    //     迁移会被永久卡死（实测 62 个缺起点成员里 55 个属于此类）。
+    //   深度不足 —— 候选的数据根本没回溯到该时点，这是真实短板，必须继续阻塞。
+    const shallower = candidateFirst > target;
+    if (required && !candidatePrices.has(target) && (previousPrices.has(target) || shallower)) {
+      result.missingStarts.push(key);
+    }
   }
   const oldFrames = frames(previous!, baseline);
   const nextFrames = frames(candidate, baseline);

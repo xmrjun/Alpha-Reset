@@ -275,3 +275,25 @@ test('Gecko长轮每次成功入库即报告更新，不等待队尾HTTP也不�
   assert.deepEqual(f.marketUpdates, [1, 2]);
   assert.equal(f.notifications.length, 0);
 });
+
+test('上游已应答无交易对的成员不再占用 Gecko 预算', async (t) => {
+  const f = fixture(t, ['a', 'b', 'nopair']);
+  // 批量查询成功但结果里没有 nopair —— 这是上游明确应答「该 CA 无任何交易对」，
+  // 与批量失败(error)严格区分。没有交易对就没有链与 pool 地址，updateGeckoMember
+  // 会在发出 HTTP 之前就以 GECKO_INPUT 拒绝，因此这类成员不消耗任何速率预算。
+  // 本测试锁定该既有不变量：日志里的 failures 是本地快速拒绝，不是浪费掉的请求。
+  f.dexBatch.getAll = async (items: { ca: string; chain: string | null }[]) => {
+    f.dexRequests.push(items.map((item) => item.ca));
+    return new Map(items.filter((item) => item.ca !== 'nopair').map((item) => [item.ca, dex(item.ca)]));
+  };
+  const scheduler = f.make();
+
+  await scheduler.discoverOnce(T);
+  const member = f.state.getObservationRound()!.members.find((item) => item.pool.ca === 'nopair')!;
+  assert.equal(member.dexStatus, 'absent', '前提：该成员已被判定为无任何交易对');
+
+  await scheduler.collectKnownPoolOnce(T);
+
+  assert.deepEqual(f.sourceRequests, ['a', 'b'],
+    '每轮重试注定失败的请求只会白烧速率预算，并把失败数推高');
+});

@@ -19,8 +19,11 @@ type PoolSeriesIdentity = MarketSeriesCommon & {
   scope?: 'pool' | undefined;
   poolAddress: string;
 };
+/** token 范围来源：按代币地址取数，不绑定固定池。各来源仍是彼此独立的序列。 */
+export const TOKEN_SOURCES = ['gmgn', 'binance'] as const;
+export type TokenSource = typeof TOKEN_SOURCES[number];
 type TokenSeriesIdentity = MarketSeriesCommon & {
-  source: 'gmgn';
+  source: TokenSource;
   scope: 'token';
   poolAddress: null;
 };
@@ -32,7 +35,7 @@ export type MarketSeries = NormalizedSeriesIdentity & {
   activatedAt: number | null;
   active: boolean;
 };
-export type SupportedMarketSeries = MarketSeries & { source: 'geckoterminal' | 'gmgn' };
+export type SupportedMarketSeries = MarketSeries & { source: 'geckoterminal' | TokenSource };
 
 /** 来源白名单与口径验证；读取具体成员时还必须核验 network + CA。 */
 export function isSupportedMarketSeries(series: MarketSeries | null | undefined): series is SupportedMarketSeries {
@@ -40,7 +43,9 @@ export function isSupportedMarketSeries(series: MarketSeries | null | undefined)
     || typeof series.network !== 'string' || !series.network || series.network !== series.network.trim()
     || typeof series.ca !== 'string' || !series.ca || series.ca !== series.ca.trim()
     || series.ca !== canonicalCa(series.ca)) return false;
-  if (series.source === 'gmgn') return series.scope === 'token' && series.poolAddress === null;
+  if ((TOKEN_SOURCES as readonly string[]).includes(series.source)) {
+    return series.scope === 'token' && series.poolAddress === null;
+  }
   return series.source === 'geckoterminal' && series.scope === 'pool'
     && typeof series.poolAddress === 'string' && series.poolAddress.length > 0
     && series.poolAddress === series.poolAddress.trim() && series.poolAddress === canonicalCa(series.poolAddress);
@@ -61,11 +66,11 @@ function normalizeIdentity(identity: MarketSeriesIdentity): NormalizedSeriesIden
     || identity.currency !== 'usd' || !Number.isSafeInteger(identity.formatVersion) || identity.formatVersion < 1) {
     throw new MarketSeriesError('SERIES_IDENTITY_INVALID', '行情序列身份无效');
   }
-  if (identity.source === 'gmgn') {
+  if ((TOKEN_SOURCES as readonly string[]).includes(identity.source)) {
     if (identity.scope !== 'token' || identity.poolAddress !== null) {
-      throw new MarketSeriesError('SERIES_IDENTITY_INVALID', 'GMGN 必须使用独立 token 行情序列');
+      throw new MarketSeriesError('SERIES_IDENTITY_INVALID', 'token 范围来源必须使用独立行情序列');
     }
-    return { ...identity, ca: canonicalCa(identity.ca) };
+    return { ...identity, ca: canonicalCa(identity.ca) } as NormalizedSeriesIdentity;
   }
   if (!['geckoterminal', 'erwa'].includes(identity.source) || (identity.scope !== undefined && identity.scope !== 'pool')
     || typeof identity.poolAddress !== 'string' || !identity.poolAddress || identity.poolAddress !== identity.poolAddress.trim()) {
@@ -85,7 +90,7 @@ export function createSeriesStore(db: StoreDatabase) {
     format_version AS formatVersion, created_at AS createdAt, activated_at AS activatedAt, active`;
   const selectSeries = db.prepare(`SELECT ${columns} FROM market_series WHERE id = ?`);
   const selectActive = db.prepare(`SELECT ${columns} FROM market_series WHERE network = ? AND ca = ? AND active = 1`);
-  const selectToken = db.prepare(`SELECT ${columns} FROM market_series WHERE source = 'gmgn'
+  const selectToken = db.prepare(`SELECT ${columns} FROM market_series WHERE source = ?
     AND scope = 'token' AND network = ? AND ca = ? AND currency = 'usd' AND format_version = ?`);
   const insertSeries = db.prepare(`INSERT INTO market_series
     (id, source, scope, network, ca, pool_address, currency, format_version, created_at)
@@ -123,8 +128,9 @@ export function createSeriesStore(db: StoreDatabase) {
   return {
     getSeries,
     getActive,
-    getTokenSeries(network: string, ca: string): MarketSeries | null {
-      return readSeries(selectToken.get(network, canonicalCa(ca), MARKET_SERIES_FORMAT_VERSION));
+    /** source 省略时沿用既有 GMGN 调用语义，避免改动所有旧调用点。 */
+    getTokenSeries(network: string, ca: string, source: TokenSource = 'gmgn'): MarketSeries | null {
+      return readSeries(selectToken.get(source, network, canonicalCa(ca), MARKET_SERIES_FORMAT_VERSION));
     },
     /** 评分事务显式选择新来源；CAS防止抢占，旧历史和新高时刻各自保留。 */
     switchActiveSeries: db.transaction((seriesId: string, expectedActiveId: string | null, now: number, reason: string): MarketSeries => {

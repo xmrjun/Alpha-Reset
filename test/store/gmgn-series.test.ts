@@ -98,7 +98,7 @@ test('v4→v5保留所有历史、原seriesId和外键；显式pool与旧调用�
   old.close();
 
   const migrated = openDatabase(filename);
-  assert.equal(migrated.pragma('user_version', { simple: true }), 6);
+  assert.equal(migrated.pragma('user_version', { simple: true }), 7);
   assert.equal(migrated.pragma('foreign_keys', { simple: true }), 1);
   assert.deepEqual(migrated.pragma('foreign_key_check'), []);
   assert.deepEqual(preservedData(migrated), before);

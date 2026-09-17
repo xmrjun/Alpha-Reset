@@ -22,7 +22,7 @@ function database(t: TestContext) {
 test('数据库建表、索引、WAL 与迁移幂等，重启后保留数据', (t) => {
   const { db, filename } = database(t);
   assert.equal(db.pragma('journal_mode', { simple: true }), 'wal');
-  assert.equal(db.pragma('user_version', { simple: true }), 6);
+  assert.equal(db.pragma('user_version', { simple: true }), 7);
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'sqlite_sequence' ORDER BY name")
     .all() as { name: string }[];
   assert.deepEqual(tables.map((row) => row.name), ['alert_outcomes', 'alerts', 'api_usage', 'breakout_moments', 'ca_pool', 'candles', 'group_ca_history', 'market_series', 'market_series_switches', 'runtime_state', 'series_candles', 'series_moments']);
@@ -39,7 +39,7 @@ test('数据库建表、索引、WAL 与迁移幂等，重启后保留数据', (
 
 test('拒绝打开更高版本数据库', (t) => {
   const { db, filename } = database(t);
-  db.pragma('user_version = 7');
+  db.pragma('user_version = 8');
   db.close();
   assert.throws(() => openDatabase(filename), /数据库版本/);
 });

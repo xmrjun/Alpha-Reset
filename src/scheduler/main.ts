@@ -6,6 +6,7 @@ import { DexScreenerClient } from '../api/dexscreener.js';
 import { resolveGeckoNetwork } from '../api/networks.js';
 import { GeckoTerminalClient, GeckoTerminalError } from '../api/geckoterminal.js';
 import { GmgnClient, resolveGmgnChain } from '../api/gmgn.js';
+import { BinanceWeb3Client, resolveBinanceChain } from '../api/binance-web3.js';
 import { ErwaClient, ErwaError } from '../api/erwa.js';
 import { loadStrategy, StrategyConfigError, type StrategyConfig } from '../config/strategy.js';
 import { calculateObservationRps, emptyBounds } from '../indicators/observation-rps.js';
@@ -20,7 +21,7 @@ import { checkPreconditions } from '../rules/preconditions.js';
 import { createCandleStore } from '../store/candles.js';
 import { openDatabase, type StoreDatabase } from '../store/db.js';
 import { createMomentStore } from '../store/moments.js';
-import { createSeriesStore, isSupportedMarketSeries, MARKET_SERIES_FORMAT_VERSION, MarketSeriesError, type MarketSeries } from '../store/series.js';
+import { createSeriesStore, isSupportedMarketSeries, MARKET_SERIES_FORMAT_VERSION, MarketSeriesError, TOKEN_SOURCES, type MarketSeries, type TokenSource } from '../store/series.js';
 import { createOutcomeStore } from '../store/outcomes.js';
 import { createPoolStore } from '../store/pool.js';
 import { createRuntimeStore, initialRound, pendingMember, RuntimeStateError, strategyKey, type RoundMember, type RoundSnapshot } from '../store/runtime.js';
@@ -28,6 +29,7 @@ import { readRoundInputs } from '../store/snapshot.js';
 import type { BoardPoolItem, DexSnapshot, Range } from '../types.js';
 import { createQuotaGuard, QuotaStopError } from './quota.js';
 import { createGmgnCollector } from './gmgn.js';
+import { createBinanceCollector } from './binance.js';
 import { gmgnReadiness, type SeriesHistory } from './gmgn-readiness.js';
 import { createCalculationCoordinator } from './calculation-coordinator.js';
 
@@ -75,7 +77,13 @@ export async function runGmgnCollectionLoop(opts: {
   collector: Pick<ReturnType<typeof createGmgnCollector>, 'collectOnce'>;
   intervalMs: number; clock: () => number; stopped: () => boolean; sleep: (ms: number) => Promise<void>;
   requestCalculation: (time: number) => Promise<void>; log?: (event: Record<string, unknown>) => void;
+  /**
+   * 两次采集之间的最小间隔，默认 1 秒。速率宽裕的来源必须调小，
+   * 否则采集器自己的限速预算会被这层地板压住（600 次/分钟只能跑出 60 次/分钟）。
+   */
+  minGapMs?: number;
 }): Promise<void> {
+  const minGapMs = opts.minGapMs ?? 1_000;
   let nextAt = 0;
   while (!opts.stopped()) {
     const now = opts.clock();
@@ -90,7 +98,7 @@ export async function runGmgnCollectionLoop(opts: {
         void opts.requestCalculation(Math.floor(opts.clock() / opts.intervalMs) * opts.intervalMs)
           .catch(() => opts.log?.({ event: 'gmgn_calculation_failed' }));
       }
-      nextAt = Math.max(opts.clock() + 1_000, result?.nextAt ?? opts.clock() + MINUTE_MS);
+      nextAt = Math.max(opts.clock() + minGapMs, result?.nextAt ?? opts.clock() + MINUTE_MS);
     } catch {
       opts.log?.({ event: 'gmgn_collection_failed' });
       nextAt = opts.clock() + MINUTE_MS;
@@ -131,10 +139,27 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   };
   const memberKey = (member: RoundMember) => JSON.stringify([memberNetwork(member), canonicalCa(member.pool.ca)]);
   const validSeries = isSupportedMarketSeries;
-  const preferGmgn = (network: string): boolean => {
-    const chain = resolveGmgnChain(network);
-    return cfg.kline.gmgn.enabled && chain !== null && cfg.kline.gmgn.chains.includes(chain);
+  const isTokenSource = (source: string): source is TokenSource => (TOKEN_SOURCES as readonly string[]).includes(source);
+  /**
+   * token 来源优先级，靠前者优先接管；同一条链最多只有一个 token 候选。
+   * 切换仍受 readiness 把关，本函数只表达偏好，不直接改变任何活跃序列。
+   */
+  const TOKEN_PREFERENCE: readonly TokenSource[] = ['binance', 'gmgn'];
+  const tokenSourceFor = (network: string): TokenSource | null => {
+    for (const source of TOKEN_PREFERENCE) {
+      if (source === 'binance') {
+        const chainId = resolveBinanceChain(network);
+        // 链名按 binanceChainId 归一，'ethereum' 与 'eth' 视为同一条链。
+        if (cfg.kline.binance.enabled && chainId !== null
+          && cfg.kline.binance.chains.some((name) => resolveBinanceChain(name) === chainId)) return source;
+      } else {
+        const chain = resolveGmgnChain(network);
+        if (cfg.kline.gmgn.enabled && chain !== null && cfg.kline.gmgn.chains.includes(chain)) return source;
+      }
+    }
+    return null;
   };
+  const prefersTokenSource = (network: string): boolean => tokenSourceFor(network) !== null;
   const historyFor = (identity: MarketSeries): SeriesHistory => ({
     candles15m: series.getCandles(identity.id, '15m'), candles60m: series.getCandles(identity.id, '1h'),
     candles4h: series.getCandles(identity.id, '4h'),
@@ -144,32 +169,41 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
     if (sameSlot && typeof member.seriesId === 'string') return;
     const active = network ? series.getActive(network, member.pool.ca) : null;
     if (active && !validSeries(active)) { member.seriesId = null; return; }
+    const preferred = tokenSourceFor(network);
+    const activeToken = active && isTokenSource(active.source) ? active.source : null;
     if (!sameSlot) {
-      member.plannedSource = active?.source === 'gmgn' || (!active && preferGmgn(network)) ? 'gmgn' : 'geckoterminal';
+      // 新 T 才可改变预定。已有活跃源一律先沿用它（token 或 Gecko），
+      // 是否让位给优先源完全由下面的候选就绪度决定；只有全新成员才直接预定优先源。
+      member.plannedSource = activeToken ?? (!active && preferred ? preferred : 'geckoterminal');
     } else if (!member.plannedSource) {
-      member.plannedSource = active?.source ?? (preferGmgn(network) ? 'gmgn' : 'geckoterminal');
-    }
-    if (active?.source === 'gmgn') {
-      member.seriesId = !sameSlot || member.plannedSource === 'gmgn' ? active.id : null;
-      return;
+      member.plannedSource = active?.source ?? preferred ?? 'geckoterminal';
     }
     // 同 T 的 null 只允许首次绑定预定来源；预定在该 T 的首次选择中确定。
-    const allowCandidate = preferGmgn(network) && (!sameSlot || member.plannedSource === 'gmgn');
-    const candidate = allowCandidate && network ? series.getTokenSeries(network, member.pool.ca) : null;
-    if (isSupportedMarketSeries(candidate) && candidate.source === 'gmgn') {
+    const allowCandidate = preferred !== null && (!sameSlot || member.plannedSource === preferred);
+    // 活跃源已是优先源时无需候选；否则允许 Gecko→token 与 token→token 两种迁移。
+    const candidate = allowCandidate && network && preferred !== activeToken
+      ? series.getTokenSeries(network, member.pool.ca, preferred) : null;
+    if (isSupportedMarketSeries(candidate) && candidate.source === preferred) {
       const readiness = gmgnReadiness({ candidate: historyFor(candidate), previous: active ? historyFor(active) : null,
         listedAt: member.pool.listedAt, now, cfg });
       if (readiness.ready) {
-        const selected = series.switchActiveSeries(candidate.id, active?.id ?? null, clock(), 'gmgn_ready_for_slot');
-        member.seriesId = selected.id; member.plannedSource = 'gmgn';
+        const selected = series.switchActiveSeries(candidate.id, active?.id ?? null, clock(), preferred + '_ready_for_slot');
+        member.seriesId = selected.id; member.plannedSource = preferred;
         return;
       }
-      // 整点端点通常晚于本地计时器到达。历史已成熟时预定 GMGN，避免每个 T 都先冻结 Gecko。
-      // 等待期间当期输入为空；旧 Gecko 值只由独立展示缓存保留。
-      if (!sameSlot && active?.source === 'geckoterminal' && readiness.missingCurrent && readiness.historyReady) {
-        member.plannedSource = 'gmgn'; member.seriesId = null;
+      // 整点端点通常晚于本地计时器到达。历史已成熟时先预定新源，等同 T 的后续修订再绑定。
+      // 同 T 内非空 seriesId 不可改变，所以不预定就等于整个 T 都没有切换机会；
+      // token→token 迁移同样依赖它——线上实测整点首次评估时几乎必缺当期 bar
+      // （T=13:00 首评 195/196 个成员缺当期），不预定则候选永远停在候选态。
+      // 代价是等待期间当期输入为空，旧来源的值只由独立展示缓存保留。
+      if (!sameSlot && readiness.missingCurrent && readiness.historyReady) {
+        member.plannedSource = preferred; member.seriesId = null;
         return;
       }
+    }
+    if (activeToken) {
+      member.seriesId = !sameSlot || member.plannedSource === activeToken ? active!.id : null;
+      return;
     }
     member.seriesId = active?.source === 'geckoterminal' && (!sameSlot || member.plannedSource === 'geckoterminal')
       ? active.id : null;
@@ -183,7 +217,7 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
     const chain = member.pool.chain ?? member.dex?.chainId;
     const network = chain ? resolveGeckoNetwork(chain) : '';
     const active = network ? series.getActive(network, member.pool.ca) : null;
-    if ((validSeries(active) && active.source === 'gmgn') || (!active && preferGmgn(network))) {
+    if ((validSeries(active) && isTokenSource(active.source)) || (!active && prefersTokenSource(network))) {
       member.seriesId = validSeries(active) ? active.id : null;
       member.klineStatus = active ? 'ready' : 'skipped';
       return;
@@ -610,7 +644,7 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
           const network = memberNetwork(member);
           const active = network ? series.getActive(network, member.pool.ca) : null;
           if (member.seriesId !== undefined || opts.klineSource) member.seriesId = validSeries(active) ? active.id : null;
-          member.plannedSource = validSeries(active) ? active.source : preferGmgn(network) ? 'gmgn' : 'geckoterminal';
+          member.plannedSource = validSeries(active) ? active.source : tokenSourceFor(network) ?? 'geckoterminal';
           return member;
         });
         // 新成员在已有等待者之后登记；每次循环重新取池，移出的 CA 不继续请求。
@@ -620,7 +654,7 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
           .filter(({ member }) => {
             const network = memberNetwork(member);
             const active = network ? series.getActive(network, member.pool.ca) : null;
-            return active ? !(validSeries(active) && active.source === 'gmgn') : !preferGmgn(network);
+            return active ? !(validSeries(active) && isTokenSource(active.source)) : !prefersTokenSource(network);
           })
           // 群列表先发布，待新成员的 Dex 身份确认后再发起行情请求。
           .filter(({ member }) => member.dexStatus !== 'pending' || Boolean(member.seriesId)
@@ -739,7 +773,8 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
         if (sameSlot && previous.rpsInputKey === inputKey) return null;
         snapshot.rpsInputKey = inputKey;
         const ranking = calculateObservationRps(inputs.map((input, i) => ({ ca: input.ca, listedAt: input.listedAt,
-          candles15m: input.candles15m, candles60m: input.candles60m, dex: snapshot.members[i]!.dex, dexStatus: snapshot.members[i]!.dexStatus })), now, cfg);
+          candles15m: input.candles15m, candles60m: input.candles60m, dex: snapshot.members[i]!.dex,
+          dexStatus: snapshot.members[i]!.dexStatus, liquidity: input.pool.liquidity ?? null })), now, cfg);
         snapshot.coverage = ranking.coverage;
         for (let i = 0; i < inputs.length; i++) {
           const input = inputs[i]!;
@@ -896,6 +931,12 @@ async function main() {
   const gmgnCollector = gmgnConfigured ? createGmgnCollector({ db, cfg,
     client: new GmgnClient({ apiKey: gmgnKey!, requestsPerMinute: cfg.kline.gmgn.requestsPerMinute }), clock: Date.now }) : null;
   if (cfg.kline.gmgn.enabled && !gmgnConfigured) console.error('GMGN 凭据未配置或格式无效，已暂停 GMGN 采集');
+  const xapiKey = process.env.XAPI_KEY;
+  const binanceConfigured = cfg.kline.binance.enabled && typeof xapiKey === 'string' && /^[\x21-\x7e]+$/.test(xapiKey);
+  const binanceCollector = binanceConfigured ? createBinanceCollector({ db, cfg,
+    client: new BinanceWeb3Client({ apiKey: xapiKey!, requestsPerMinute: cfg.kline.binance.requestsPerMinute }),
+    clock: Date.now }) : null;
+  if (cfg.kline.binance.enabled && !binanceConfigured) console.error('XAPI_KEY 未配置或格式无效，已暂停 Binance Web3 采集');
   const interval = cfg.schedule.mainLoopMinutes * MINUTE_MS;
   const baseline = () => Math.floor(Date.now() / interval) * interval;
   let lastSlot = -1;
@@ -965,6 +1006,12 @@ async function main() {
       } catch { console.error('观察池发现失败'); }
     })().finally(() => { discovery = null; });
   };
+  let wakeBinance: (() => void) | null = null;
+  const pauseBinance = (ms: number) => new Promise<void>((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() { clearTimeout(timer); wakeBinance = null; resolve(); }
+    wakeBinance = done;
+  });
   let wakeGmgn: (() => void) | null = null;
   const pauseGmgn = (ms: number) => new Promise<void>((resolve) => {
     const timer = setTimeout(done, ms);
@@ -978,11 +1025,19 @@ async function main() {
   const gmgnCollection = gmgnCollector ? runGmgnCollectionLoop({ collector: gmgnCollector,
     intervalMs: interval, clock: Date.now, stopped: () => closing, sleep: pauseGmgn, requestCalculation,
     log: (event) => console.log(JSON.stringify(event)) }) : Promise.resolve();
+  // Binance Web3 与 GMGN 各自按 nextAt 前进，重算频率仍由共享协调器统一节流。
+  const binanceCollection = binanceCollector ? runGmgnCollectionLoop({ collector: binanceCollector,
+    intervalMs: interval, clock: Date.now, stopped: () => closing, sleep: pauseBinance, requestCalculation,
+    // 节奏交给采集器自己的限速预算，循环不再额外压一层 1 秒地板。
+    minGapMs: Math.max(1, Math.ceil(60_000 / cfg.kline.binance.requestsPerMinute)),
+    log: (event) => console.log(JSON.stringify(event)) }) : Promise.resolve();
   const shutdown = async () => {
     if (closing) return;
-    closing = true; scheduler.stop(); gmgnCollector?.stop(); wakeCollector?.(); wakeGmgn?.();
+    closing = true; scheduler.stop(); gmgnCollector?.stop(); binanceCollector?.stop();
+    wakeCollector?.(); wakeGmgn?.(); wakeBinance?.();
     const finishingCalculation = coordinator.stop();
-    await task.destroy(); await collector; await gmgnCollection; await discovery; await finishingCalculation; db.close();
+    await task.destroy(); await collector; await gmgnCollection; await binanceCollection;
+    await discovery; await finishingCalculation; db.close();
   };
   process.once('SIGINT', () => { void shutdown(); }); process.once('SIGTERM', () => { void shutdown(); });
 

@@ -28,12 +28,12 @@ export interface RoundMember {
   /** undefined 仅兼容旧离线输入；null 表示尚无已验证行情。 */
   seriesId?: string | null | undefined;
   /** 同一计算 T 未首次绑定前预定来源，防迟到数据改用另一供应商。 */
-  plannedSource?: 'geckoterminal' | 'gmgn' | undefined;
+  plannedSource?: 'geckoterminal' | 'gmgn' | 'binance' | undefined;
   result: RuleOutput | null;
 }
 export interface RpsCoverage {
   eligible: number; available: number; complete: boolean; source: 'dex_h24' | 'kline';
-  unknownAge?: number | undefined; inactive?: number | undefined; ageConfirmedByHistory?: number | undefined; missingCurrent?: number | undefined; missingStart?: number | undefined; boundedPassCount?: number | undefined;
+  unknownAge?: number | undefined; inactive?: number | undefined; illiquid?: number | undefined; ageConfirmedByHistory?: number | undefined; missingCurrent?: number | undefined; missingStart?: number | undefined; boundedPassCount?: number | undefined;
 }
 export interface RoundSnapshot {
   version: 1;
@@ -76,7 +76,8 @@ const boundsSchema = z.object({ r16: boundSchema, r56: boundSchema, r96: boundSc
 const coverageSchema = z.object({ eligible: z.number().int().nonnegative(), available: z.number().int().nonnegative(),
   complete: z.boolean(), source: z.enum(['dex_h24', 'kline']),
   unknownAge: z.number().int().nonnegative().optional(), inactive: z.number().int().nonnegative().optional(), ageConfirmedByHistory: z.number().int().nonnegative().optional(), missingCurrent: z.number().int().nonnegative().optional(),
-  missingStart: z.number().int().nonnegative().optional(), boundedPassCount: z.number().int().nonnegative().optional() });
+  missingStart: z.number().int().nonnegative().optional(), illiquid: z.number().int().nonnegative().optional(),
+  boundedPassCount: z.number().int().nonnegative().optional() });
 const roundSchema: z.ZodType<RoundSnapshot> = z.object({
   version: z.literal(1), strategyKey: z.string(), startedAt: stamp, completedAt: stamp.nullable(),
   status: z.enum(['running', 'complete', 'partial', 'halted', 'failed']), boardComplete: z.boolean(),
@@ -93,7 +94,7 @@ const roundSchema: z.ZodType<RoundSnapshot> = z.object({
     totalMentions: z.number().int().nonnegative(), dexAt: stamp.nullable(), dexStatus: z.enum(['pending', 'ok', 'error', 'absent']),
     qualified: z.boolean(), klineStatus: z.enum(['skipped', 'ready', 'error']), rpsScores: scoresSchema,
     rpsBounds: boundsSchema.optional(), rpsDisplayBounds: boundsSchema.optional(), seriesId: z.string().min(1).nullable().optional(),
-    plannedSource: z.enum(['geckoterminal', 'gmgn']).optional(),
+    plannedSource: z.enum(['geckoterminal', 'gmgn', 'binance']).optional(),
     dex: z.object({ pairAddress: z.string().nullable(), chainId: z.string().nullable(), priceUsd: nullableNumber, marketCap: nullableNumber, liquidityUsd: nullableNumber, pairCreatedAt: stamp.nullable(),
       priceChange: z.object({ m5: nullableNumber, h1: nullableNumber, h6: nullableNumber, h24: nullableNumber }) }).nullable(),
     result: z.object({ passed: z.boolean(), reasons: z.object({ a1: z.boolean(), a2: z.boolean(), a3: z.boolean(), a4: z.boolean() }),

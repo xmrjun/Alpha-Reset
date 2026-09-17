@@ -42,11 +42,11 @@
     "poolScope": "observeGroups",
     "skipWhenInsufficientHistory": true,
     "minCoverage": 0.75,
-    "$comment_minCoverage": "完整适龄集合保持原分母。覆盖达到此比例且样本数足够时，只有排名下界超过阈值才允许通过；全量完整才给精确评分。覆盖不足的数学区间仅供页面观察，不触发规则。",
+    "$comment_minCoverage": "⚠️ 本参数不在原始需求文档中，是工程判断。文档只规定「覆盖不足仅显示范围；达到配置门槛后，精确评分或可证明的保守下界严格大于阈值才参与 A4」——门槛数值由实现决定。该档有效涨幅数占潜在适龄分母达到此比例、且样本数达到 minRanked 时，区间才进入规则；全量完整才给精确评分。覆盖不足的数学区间仅供页面观察，不触发规则。与 inactiveAfterBars 共同决定 A4 能否触发，调整前请一并考虑。",
     "minRanked": 2,
     "maxStaleBars": 4,
     "inactiveAfterBars": 16,
-    "$comment_inactiveAfterBars": "成员在基准 T 之前这么多根 15m 内没有任何已收盘价即判定失活，从全部档位的排名分母中剔除。依据：已验证上游确无新 K 线（池子停止成交）或 DexScreener 返回 pairs:null（该 CA 无任何交易对），不是本地抓取失败——抓取失败会记 GECKO_INPUT/请求错误，不会静默变成失活。剔除方向是保守的：分母变小会让同名次的 RPS 分值下降，只会漏报不会误报。16 根=4 小时零成交，在本池属于无争议的休眠；调小会放宽（1 小时只是流动性差，不等于死盘）。",
+    "$comment_inactiveAfterBars": "⚠️ 本参数不在原始需求文档中，是工程判断。需求文档第 7 节列出的 12 个青色可调参数不含它，文档也从未讨论过「代币已停止成交」这种情形。引入原因见 docs/18：覆盖率全线跌破 minCoverage 导致 A4 恒假、系统 20 小时零告警，而观察池里混有已无市场的成员。成员在基准 T 之前这么多根 15m 内没有任何已收盘价即判定失活，从全部档位的排名分母中剔除。判定只依据已验证证据：有历史看上游最新一根是否早于该阈值（已直接请求上游确认与本地库存一致），无历史只认 dexStatus='absent'（DexScreener 返回 200 且 pairs:null）。采集中断只会产生 error/pending，成员留在分母，覆盖率随之下降并正常阻止告警，不会被误判成失活。剔除方向保守：分母变小会让同名次的 RPS 分值下降，只漏报不误报。设为极大值即等于关闭本机制、回到需求文档口径（代价是 A4 很可能恒假）。",
     "$comment_maxStaleBars": "仅保留旧配置兼容；当前RPS要求各CA在共同基准T及窗口起点具有精确已收盘价格，不使用此容差取最近价。",
     "$comment_minRanked": "参与排名的最少 CA 数，少于此值排名无统计意义",
     "periods": {
@@ -121,6 +121,21 @@
       "refreshMinutes": 10,
       "warmupAssets": 12,
       "$comment": "独立token/USD序列，近期更新与96根时间切片历史回补共享单一限速；已有Gecko在新T历史门槛达标后逐步切换，新CA可使用已验证GMGN数据。warmupAssets只限制同时预热批次，不限制观察池。"
+    },
+    "binance": {
+      "enabled": false,
+      "requestsPerMinute": 120,
+      "chains": [
+        "robinhood",
+        "bsc",
+        "solana",
+        "base",
+        "ethereum",
+        "avalanche"
+      ],
+      "refreshMinutes": 5,
+      "historyDays": 8,
+      "$comment": "Binance Web3 DEX 行情（经 xAPI 网关）。实测：bar=15m 网格对齐 100%，活跃币填充率 100%，单页上限 300 根，按 after 向更早翻页；限流 10 次/秒即 600 次/分钟，按次计费但单价为 $0。覆盖 15 条链含 Robinhood，但不含 arc / xlayer / hyperevm，那些链仍由 Gecko 承担。与 GMGN 同为 token 范围序列，两者及 Gecko 的 pool 序列三方彼此独立，绝不拼接。凭据在 .env 的 XAPI_KEY。"
     }
   },
   "quota": {

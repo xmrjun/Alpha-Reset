@@ -40,7 +40,8 @@ export interface StrategyConfig {
   supplementary: { volMaPeriod: number; rsiBelow: number };
   indicators: { rsiPeriod: number };
   kline: { source: 'geckoterminal'; requestsPerMinute: number; bars15m: number;
-    gmgn: { enabled: boolean; requestsPerMinute: number; chains: string[]; refreshMinutes: number; warmupAssets: number } };
+    gmgn: { enabled: boolean; requestsPerMinute: number; chains: string[]; refreshMinutes: number; warmupAssets: number };
+    binance: { enabled: boolean; requestsPerMinute: number; chains: string[]; refreshMinutes: number; historyDays: number } };
   schedule: { mainLoopMinutes: number; revisionMinutes: number;
     klineRefresh: { range24h: number; range7d: number; range30d: number } };
   quota: { dailyLimit: number; degradeAtPercent: number; haltAtPercent: number };
@@ -86,6 +87,17 @@ const strategySchema: z.ZodType<StrategyConfig> = z.strictObject({
     }).refine((value) => !value.enabled || value.chains.length > 0)
       .default({ enabled: false, requestsPerMinute: 30, chains: ['sol', 'bsc', 'base', 'eth', 'robinhood'],
         refreshMinutes: 10, warmupAssets: 12 }),
+    // chains 用内部链名（robinhood / bsc / solana …），由 resolveBinanceChain 映射成 binanceChainId；
+    // 该来源不覆盖 arc / xlayer / hyperevm，配了也会被映射成 null 而跳过。
+    // 与 gmgn 一样给默认值：升级前写好的配置文件缺这一节时仍可加载，且默认关闭。
+    binance: z.strictObject({ enabled: z.boolean(), requestsPerMinute: positiveInteger.max(600),
+      chains: z.array(z.string().min(1)).min(1)
+        .refine((items) => new Set(items).size === items.length, '链不能重复'),
+      refreshMinutes: positiveInteger.max(60), historyDays: positiveInteger.max(30),
+    }).refine((value) => !value.enabled || value.chains.length > 0)
+      .default({ enabled: false, requestsPerMinute: 120,
+        chains: ['robinhood', 'bsc', 'solana', 'base', 'ethereum', 'avalanche'],
+        refreshMinutes: 5, historyDays: 8 }),
   }),
   schedule: z.strictObject({ mainLoopMinutes: positiveInteger, revisionMinutes: positiveInteger.default(3), klineRefresh: z.strictObject({
     range24h: positiveInteger, range7d: positiveInteger, range30d: positiveInteger,
