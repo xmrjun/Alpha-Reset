@@ -208,3 +208,107 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
 .outcomes-table th.group { text-align: center; }
 .outcomes-subtitle { margin: 22px 20px 8px; font-size: 12px; }
 .outcomes-note { margin: 14px 20px 18px; font-size: 10px; color: var(--text-muted); line-height: 1.6; }
+
+/* AI 助手面板：和事后表现一样可折叠 —— 没存 key 的人展开也只看得到一个输入框，
+   默认铺开只会把真正的行情内容挤下去。 */
+.agent-panel { margin-top: 24px; }
+.agent-panel > details > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 17px 22px;
+  cursor: pointer;
+  list-style: none;
+}
+.agent-panel > details > summary::-webkit-details-marker { display: none; }
+/* 折叠标记同样用 JSX 里的真实元素，理由见 components.tsx 里的说明。 */
+.agent-caret { display: inline-block; color: var(--text-muted); font-size: 10px; transition: transform 120ms ease; }
+.agent-panel > details[open] > summary .agent-caret { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .agent-caret { transition: none; } }
+.agent-panel > details[open] > summary { border-bottom: 1px solid var(--border); }
+.agent-panel > details > *:not(summary) { min-width: 0; }
+.agent-summary-title { font-size: 13px; font-weight: 600; }
+.agent-summary-hint { margin-left: auto; font-size: 10px; color: var(--text-muted); }
+
+.agent-settings { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 16px 22px 0; }
+.agent-settings label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.agent-settings label > span { font-size: 11px; color: var(--text-muted); }
+.agent-key-field, .agent-model-field { flex: 1 1 230px; }
+.agent-key-field input, .agent-model-field select { width: 100%; min-width: 0; }
+.agent-panel button:disabled { opacity: .5; cursor: not-allowed; }
+
+.agent-privacy { padding: 11px 22px 0; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.agent-key-state { color: var(--text); font-weight: 600; }
+.agent-tools-line { padding: 7px 22px 0; font-size: 10px; color: var(--text-muted); overflow-wrap: anywhere; }
+.agent-panel .notice { margin: 14px 22px 0; }
+
+.agent-log {
+  margin: 14px 22px;
+  padding: 14px;
+  max-height: 430px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-alt);
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.agent-empty { font-size: 11px; color: var(--text-muted); }
+/* 工具进行中的状态行用强调色：用户要能一眼看出 agent 正在替他查什么。 */
+.agent-status { font-size: 11px; color: var(--accent); }
+.agent-turn { display: grid; gap: 5px; min-width: 0; }
+.agent-role { font-size: 9px; letter-spacing: 1.4px; color: var(--text-muted); }
+.agent-bubble {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.agent-user .agent-bubble { border-color: var(--accent); }
+/* 模型答案整块用等宽字体：它经常回 markdown 表格，比例字体下列对不齐就没法读。 */
+.agent-assistant .agent-bubble { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11.5px; }
+.agent-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 表格块不折行，宁可自己横向滚动，也不能把列糊成一团。 */
+.agent-table { white-space: pre; overflow-x: auto; font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; line-height: 1.5; }
+.agent-tool { font-size: 11px; border: 1px dashed var(--border); border-radius: 7px; background: var(--surface); padding: 7px 11px; }
+.agent-tool > summary { color: var(--text-muted); display: flex; align-items: center; gap: 7px; }
+.agent-tool-dot { color: var(--accent); font-size: 9px; }
+.agent-tool pre { margin-top: 9px; max-height: 230px; }
+
+.agent-composer { padding: 0 22px 18px; display: grid; gap: 10px; }
+/* textarea 不在全局 `button, input, select` 那条规则里，字体和配色要单独补。 */
+.agent-composer textarea {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px 12px;
+  resize: vertical;
+  width: 100%;
+  min-width: 0;
+}
+.agent-composer textarea::placeholder { color: var(--text-muted); }
+.agent-composer textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.agent-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agent-hint-inline { font-size: 10px; color: var(--text-muted); }
+
+@media (max-width: 620px) {
+  .agent-panel > details > summary { padding: 15px; gap: 8px; }
+  .agent-summary-hint { margin-left: 0; flex-basis: 100%; }
+  .agent-settings { padding: 14px 15px 0; }
+  .agent-key-field, .agent-model-field { flex-basis: 100%; }
+  .agent-privacy, .agent-tools-line { padding-left: 15px; padding-right: 15px; }
+  .agent-panel .notice { margin: 12px 15px 0; }
+  .agent-log { margin: 12px 15px; padding: 11px; max-height: 340px; }
+  .agent-composer { padding: 0 15px 15px; }
+  .agent-actions button { flex: 1 1 auto; }
+  .agent-hint-inline { flex-basis: 100%; }
+}

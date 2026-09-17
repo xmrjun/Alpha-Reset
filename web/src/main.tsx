@@ -4,6 +4,7 @@ import type { AlertsResponse, DetailResponse, OutcomesResponse, PoolResponse, Po
 import { PERIODS, RPS_KEYS, TAG_DETAILS, type Period } from '../../src/market.js';
 import { dateTime, money, number, relativeTime, useApi } from './api.js';
 import { AlertCard, CopyCa, Empty, ErrorBox, Outcomes, RpsCell, Tags } from './components.js';
+import { AgentPanel } from './AgentPanel.js';
 import { COPY, detectLang, LangContext, persistLang, useCopy, type Lang } from './i18n.js';
 import { PriceChart } from './Chart.js';
 import './style.css';
@@ -272,7 +273,9 @@ function App() {
       <button aria-label={t.langToggleLabel} onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}>{t.langToggle}</button>
       <button aria-label={t.themeLabel} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? t.themeDark : t.themeLight}</button></div></header>
     <main><ErrorBox message={stats.error} retry={stats.reload} />{path === '/' ? <Overview stats={stats.data} /> : path === '/alerts' ? <AlertHistory /> : ca ? <Detail ca={ca} theme={theme} />
-      : <Empty title={t.notFoundTitle} description={t.notFoundDesc} />}</main>
+      : <Empty title={t.notFoundTitle} description={t.notFoundDesc} />}
+      {/* 聊天面板固定在每个页面最底部：它问的是全局数据，跟当前看的是哪一页无关。 */}
+      <AgentPanel /></main>
     <footer><span>ALPHA / RESET</span><span>{t.footerTagline}</span><span>{t.footerSources((stats.data?.dataQuality.enabledSources ?? ['geckoterminal']).map((source) => source === 'gmgn' ? 'GMGN' : source === 'binance' ? 'Binance Web3' : 'GeckoTerminal').join(' / '))}</span></footer>
   </LangContext.Provider>;
 }
