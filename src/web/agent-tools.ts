@@ -11,7 +11,10 @@ import { z } from 'zod';
  */
 
 export class AgentToolError extends Error {
-  constructor(readonly code: 'UNKNOWN_TOOL' | 'INVALID_ARGS', message: string) {
+  constructor(
+    readonly code: 'UNKNOWN_TOOL' | 'INVALID_ARGS' | 'NOT_CONFIGURED' | 'BUDGET_EXHAUSTED' | 'UPSTREAM_FAILED',
+    message: string,
+  ) {
     super(message);
     this.name = 'AgentToolError';
   }
@@ -34,6 +37,7 @@ const schemas = {
     limit,
   }),
   query_coverage: z.strictObject({}),
+  social_check: z.strictObject({ ca: z.string().min(8).max(256) }),
   diagnose: z.strictObject({}),
 } as const;
 
@@ -89,6 +93,24 @@ export const AGENT_TOOLS: readonly AgentToolDefinition[] = [
       + '（缺当期价、缺窗口起点、已失活、流动性不足各多少个）。'
       + '回答「为什么没有告警」「覆盖率为什么不达标」时必须先调这个。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'social_check',
+    description: '查一个合约地址在 X(Twitter) 上的讨论质量：提及数、其中多少条是批量刷量、'
+      + '有没有真实大V参与、浏览量中位数。'
+      + '注意提及数本身是反向指标 —— 刷量占比高说明有人在花钱买量，通常是出货前兆，'
+      + '所以不要把「提及多」当利好来回答。'
+      + '回答「这个币在推特上热度怎么样」「有没有大V在推」「社交面靠不靠谱」时使用；'
+      + '判断某个告警值不值得跟时，也应该配合 query_pool 一起看。'
+      + '这个工具会请求外部接口、有每日额度，同一个合约十分钟内只实际查一次。',
+    parameters: {
+      type: 'object',
+      properties: {
+        ca: { type: 'string', description: '合约地址，从 query_pool 或 query_alerts 的结果里取' },
+      },
+      required: ['ca'],
+      additionalProperties: false,
+    },
   },
   {
     name: 'diagnose',

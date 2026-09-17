@@ -270,6 +270,7 @@ const zh = {
   agentTools: {
     query_pool: '查询观察池', query_alerts: '查询告警历史',
     query_coverage: '查询覆盖率', diagnose: '诊断运行状态',
+    social_check: '查推特讨论质量',
   } as Record<string, string>,
   agentToolsReady: (n: number) => `可用工具 ${n} 个`,
   agentToolRunning: (label: string) => `正在${label}…`,
@@ -567,6 +568,7 @@ const en: Copy = {
   agentTools: {
     query_pool: 'query the watchlist', query_alerts: 'query alert history',
     query_coverage: 'query coverage', diagnose: 'diagnose system state',
+    social_check: 'check X/Twitter chatter',
   } as Record<string, string>,
   agentToolsReady: (n: number) => `${n} tool${n === 1 ? '' : 's'} available`,
   agentToolRunning: (label: string) => `Running: ${label}…`,

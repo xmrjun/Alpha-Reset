@@ -16,6 +16,8 @@ import { createUsageStore } from '../store/usage.js';
 import type { AlertTag } from '../types.js';
 import { dataQuality, queryAlertGroups, queryOutcomes } from './queries.js';
 import { AGENT_TOOLS, AgentToolError, parseToolArgs } from './agent-tools.js';
+import { XapiTwitterClient } from '../api/xapi-twitter.js';
+import { SocialLookup } from './social-lookup.js';
 import { latestObservationRound, readRpsDisplay, verifiedDisplaySeries, verifiedCalculationSeries } from './rps-display.js';
 import { createWebReadModel, type WebReadContext } from './read-context.js';
 import { attachLiveFeed } from './live.js';
@@ -29,9 +31,22 @@ const chatSchema = z.looseObject({ key: z.string().min(8).max(512) });
 const toolSchema = z.strictObject({ name: z.string().min(1).max(64), arguments: z.unknown().optional() });
 const sortSchema = z.string().default('-lastAlertAt').refine((value) => sorts.includes(value.replace(/^-/, '')));
 
-export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; now?: () => number; quotaTimezone?: string; liveIntervalMs?: number }) {
+/** 配额按来访者分摊；站点在 nginx 后面，真实地址在 X-Forwarded-For 第一段。 */
+function clientKey(request: IncomingMessage): string {
+  const forwarded = request.headers['x-forwarded-for'];
+  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return first?.split(',')[0]?.trim() || request.socket.remoteAddress || 'unknown';
+}
+
+export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; now?: () => number; quotaTimezone?: string; liveIntervalMs?: number; social?: SocialLookup }) {
   const { db, cfg } = opts;
   const clock = opts.now ?? Date.now;
+  // 唯一会花钱的工具：没有 XAPI_KEY 就整个不可用，而不是退化成空结果。
+  const xapiKey = process.env.XAPI_KEY;
+  const social = opts.social ?? new SocialLookup({
+    client: xapiKey ? new XapiTwitterClient({ apiKey: xapiKey }) : null,
+    clock, dailyLimit: 2000, perClientLimit: 50, cacheMs: 600_000,
+  });
   const reads = createWebReadModel(db, cfg);
   function statsAt(now: number, context = reads.readContext()): StatsResponse {
     const timezone = opts.quotaTimezone ?? 'UTC';
@@ -160,6 +175,13 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
           if (agentPath === '/api/agent/tool') {
             const call = toolSchema.parse(body);
             const args = parseToolArgs(call.name, call.arguments);
+            if (call.name === 'social_check') {
+              // 走外部接口且计费，不进 db 事务；配额按来访 IP 分摊。
+              const found = await social.check(String(args.ca), clientKey(request));
+              send(200, { result: { ...found.quality, cached: found.cached,
+                usedToday: found.usedToday, dailyLimit: found.dailyLimit } });
+              return;
+            }
             send(200, { result: db.transaction(() => runAgentTool(call.name, args, clock()))() });
             return;
           }
