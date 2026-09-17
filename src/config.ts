@@ -30,7 +30,10 @@ export class ConfigError extends Error {
 
 export function loadConfig() {
   try {
-    loadEnvFile();
+    // 允许按进程指定凭据文件：web 只需要 XAPI_KEY，不该持有 Telegram bot token、
+    // GMGN key 和二娃 token —— 而它恰好是唯一直接暴露在公网请求面前的进程。
+    const envFile = process.env.ENV_FILE;
+    if (envFile) loadEnvFile(envFile); else loadEnvFile();
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
       throw new ConfigError('无法读取 .env 配置文件');

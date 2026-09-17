@@ -1,7 +1,6 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { canonicalCa } from '../addresses.js';
 import { resolveGeckoNetwork } from '../api/networks.js';
 import { loadStrategy, type StrategyConfig } from '../config/strategy.js';
 import { rsi } from '../indicators/rsi.js';
@@ -16,6 +15,7 @@ import { createUsageStore } from '../store/usage.js';
 import type { AlertTag } from '../types.js';
 import { dataQuality, queryAlertGroups, queryOutcomes } from './queries.js';
 import { AGENT_TOOLS, AgentToolError, SOCIAL_RESULT_NOTE, parseToolArgs } from './agent-tools.js';
+import { canonicalCa } from '../addresses.js';
 import { XapiTwitterClient } from '../api/xapi-twitter.js';
 import { SocialLookup } from './social-lookup.js';
 import { latestObservationRound, readRpsDisplay, verifiedDisplaySeries, verifiedCalculationSeries } from './rps-display.js';
@@ -51,6 +51,8 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   const clock = opts.now ?? Date.now;
   // 唯一会花钱的工具：没有 XAPI_KEY 就整个不可用，而不是退化成空结果。
   const xapiKey = process.env.XAPI_KEY;
+  // social_check 只允许查观察池成员，这条语句在每次调用前确认归属。
+  const poolMembership = db.prepare('SELECT 1 FROM ca_pool WHERE ca = ? LIMIT 1');
   const social = opts.social ?? new SocialLookup({
     client: xapiKey ? new XapiTwitterClient({ apiKey: xapiKey }) : null,
     clock, dailyLimit: 2000, perClientLimit: 50, cacheMs: 600_000,
@@ -177,6 +179,13 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
     };
     const agentPath = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
     if (request.method === 'POST' && (agentPath === '/api/agent/tool' || agentPath === '/api/agent/chat')) {
+      // 只收 JSON。不校验的话，一个跨站表单就能直接 POST 过来消费本站额度 ——
+      // 表单发得出 text/plain，发不出 application/json（那要先过 CORS 预检）。
+      const contentType = String(request.headers['content-type'] ?? '').toLowerCase();
+      if (!contentType.includes('application/json')) {
+        send(415, { error: 'UNSUPPORTED_MEDIA_TYPE' });
+        return;
+      }
       void (async () => {
         try {
           const body = await readJsonBody(request);
@@ -184,10 +193,18 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
             const call = toolSchema.parse(body);
             const args = parseToolArgs(call.name, call.arguments);
             if (call.name === 'social_check') {
+              // 归一：同一个 EVM 地址大小写不同会变成两条缓存，等于同一份数据买两遍。
+              const ca = canonicalCa(String(args.ca));
+              // 只能问我们已经在追的币。真正的防线不是拦住攻击者，而是让他绕过配额之后
+              // 拿到的东西毫无价值 —— 池内的币本来就在公开页面上展示。
+              if (!poolMembership.get(ca)) {
+                throw new AgentToolError('INVALID_ARGS', '该合约不在观察池内');
+              }
               // 走外部接口且计费，不进 db 事务；配额按来访 IP 分摊。
-              const found = await social.check(String(args.ca), clientKey(request));
+              const found = await social.check(ca, clientKey(request));
+              // 不回 usedToday/dailyLimit：那等于把预算余额实时播报给匿名调用方，
+              // 让对方一眼看出攻击有没有奏效。
               send(200, { result: { ...found.quality, cached: found.cached,
-                usedToday: found.usedToday, dailyLimit: found.dailyLimit,
                 note: SOCIAL_RESULT_NOTE } });
               return;
             }
