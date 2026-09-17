@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer, type IncomingHttpHeaders, type IncomingMessage } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { canonicalCa } from '../addresses.js';
@@ -31,11 +31,19 @@ const chatSchema = z.looseObject({ key: z.string().min(8).max(512) });
 const toolSchema = z.strictObject({ name: z.string().min(1).max(64), arguments: z.unknown().optional() });
 const sortSchema = z.string().default('-lastAlertAt').refine((value) => sorts.includes(value.replace(/^-/, '')));
 
-/** 配额按来访者分摊；站点在 nginx 后面，真实地址在 X-Forwarded-For 第一段。 */
-function clientKey(request: IncomingMessage): string {
-  const forwarded = request.headers['x-forwarded-for'];
-  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  return first?.split(',')[0]?.trim() || request.socket.remoteAddress || 'unknown';
+/**
+ * 配额按来访者分摊。
+ *
+ * 只认 `X-Real-IP`：nginx 用 `$remote_addr` 覆盖式写入它，客户端伪造不进来。
+ * `X-Forwarded-For` 走的是 `$proxy_add_x_forwarded_for`，是**追加**语义 ——
+ * 客户端自己发的值原样留在第一段，取第一段等于让人随手重置配额。
+ */
+export function clientKey(
+  request: { headers: IncomingHttpHeaders; socket?: { remoteAddress?: string | undefined } },
+): string {
+  const real = request.headers['x-real-ip'];
+  const value = Array.isArray(real) ? real[0] : real;
+  return value?.trim() || request.socket?.remoteAddress || 'unknown';
 }
 
 export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; now?: () => number; quotaTimezone?: string; liveIntervalMs?: number; social?: SocialLookup }) {

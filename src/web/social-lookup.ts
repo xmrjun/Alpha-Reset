@@ -47,6 +47,8 @@ export class SocialLookup {
 
   readonly #cache = new Map<string, { at: number; quality: SocialQuality; costUsd: number }>();
   readonly #perClient = new Map<string, number>();
+  /** 同一个合约正在查时复用那次请求：否则并发提问会把同一份数据买很多遍。 */
+  readonly #inflight = new Map<string, Promise<SocialLookupResult>>();
   #day = '';
   #used = 0;
 
@@ -74,21 +76,40 @@ export class SocialLookup {
         usedToday: this.#used, dailyLimit: this.#dailyLimit };
     }
 
+    const pending = this.#inflight.get(ca);
+    if (pending) return pending;
+
     // 两道闸都在请求之前判，超限时不产生任何费用。
     if (this.#used >= this.#dailyLimit) {
       throw new AgentToolError('BUDGET_EXHAUSTED', '今日社交查询额度已用完，明天再试');
     }
-    if ((this.#perClient.get(clientId) ?? 0) >= this.#perClientLimit) {
+    const usedByClient = this.#perClient.get(clientId) ?? 0;
+    if (usedByClient >= this.#perClientLimit) {
       throw new AgentToolError('BUDGET_EXHAUSTED', '你今天的社交查询次数已用完');
     }
 
-    const { posts, costUsd } = await this.#client.searchMentions(ca);
+    // 额度必须在 await 之前就占住。判断在前、自增在后的话，N 个并发请求会在第一个
+    // 自增发生之前全部通过检查，上限就变成了攻击者能打出多少并发。
     this.#used += 1;
-    this.#perClient.set(clientId, (this.#perClient.get(clientId) ?? 0) + 1);
+    this.#perClient.set(clientId, usedByClient + 1);
 
-    const quality = assessSocial(posts);
-    this.#remember(ca, { at: now, quality, costUsd });
-    return { quality, cached: false, costUsd, usedToday: this.#used, dailyLimit: this.#dailyLimit };
+    const task = (async (): Promise<SocialLookupResult> => {
+      try {
+        const { posts, costUsd } = await this.#client!.searchMentions(ca);
+        const quality = assessSocial(posts);
+        this.#remember(ca, { at: now, quality, costUsd });
+        return { quality, cached: false, costUsd, usedToday: this.#used, dailyLimit: this.#dailyLimit };
+      } catch (error) {
+        // 上游故障不该白吃一次额度。
+        this.#used -= 1;
+        this.#perClient.set(clientId, usedByClient);
+        throw error;
+      } finally {
+        this.#inflight.delete(ca);
+      }
+    })();
+    this.#inflight.set(ca, task);
+    return task;
   }
 
   #remember(ca: string, entry: { at: number; quality: SocialQuality; costUsd: number }): void {

@@ -22,6 +22,16 @@ export class AgentToolError extends Error {
 
 const limit = z.number().int().min(1).max(50).default(20);
 
+/**
+ * 合约地址：EVM 的 0x+40 hex，或 base58（Solana / Tron）。
+ *
+ * 这个值会被原样送进 X 的搜索接口，而每次搜索都花运营方的钱。只校验长度的话，
+ * 任意字符串都能进去，站点就成了别人免费用的匿名搜索服务 —— 所以这里必须是
+ * 地址形态，不能是搜索词。
+ */
+const contractAddress = z.string().trim()
+  .regex(/^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/);
+
 const schemas = {
   query_pool: z.strictObject({
     chain: z.string().min(1).max(32).optional(),
@@ -37,7 +47,7 @@ const schemas = {
     limit,
   }),
   query_coverage: z.strictObject({}),
-  social_check: z.strictObject({ ca: z.string().min(8).max(256) }),
+  social_check: z.strictObject({ ca: contractAddress }),
   diagnose: z.strictObject({}),
 } as const;
 
