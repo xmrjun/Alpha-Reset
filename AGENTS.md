@@ -26,6 +26,16 @@
 6. **不要为了让测试通过而弱化测试**
    测试失败说明实现有问题，改实现不改断言。
 
+7. **agent 层不得持有推理凭据**
+   `/api/agent/chat` 是哑代理：只把用户 key 放进 `Authorization`，请求体原样转发、
+   响应原样回传，不解析、不存储、不记录。禁止任何服务端兜底 key —— 缺 key 就返回
+   `MISSING_KEY`。key 只能走请求体，绝不进 URL（nginx 会把 URL 写进访问日志）。
+   自查：`grep -rn "OPENROUTER_API_KEY\|ORBIO_KEY" src/web/` 必须无输出。
+
+8. **`social_check` 是唯一会花钱的工具，额度必须在请求之前判**
+   缓存命中、全局日上限、单访客日上限三道闸全部在 `fetch` 之前决定，
+   被拒时不得产生任何上游请求。改 `src/web/social-lookup.ts` 时这条不能破。
+
 ## 技术栈
 
 Node 24 + TypeScript（ESM）+ better-sqlite3 + zod + node:test
