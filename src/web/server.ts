@@ -15,7 +15,7 @@ import { readRoundInputs } from '../store/snapshot.js';
 import { createUsageStore } from '../store/usage.js';
 import type { AlertTag } from '../types.js';
 import { dataQuality, queryAlertGroups, queryOutcomes } from './queries.js';
-import { AGENT_TOOLS, AgentToolError, parseToolArgs } from './agent-tools.js';
+import { AGENT_TOOLS, AgentToolError, SOCIAL_RESULT_NOTE, parseToolArgs } from './agent-tools.js';
 import { XapiTwitterClient } from '../api/xapi-twitter.js';
 import { SocialLookup } from './social-lookup.js';
 import { latestObservationRound, readRpsDisplay, verifiedDisplaySeries, verifiedCalculationSeries } from './rps-display.js';
@@ -179,7 +179,8 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
               // 走外部接口且计费，不进 db 事务；配额按来访 IP 分摊。
               const found = await social.check(String(args.ca), clientKey(request));
               send(200, { result: { ...found.quality, cached: found.cached,
-                usedToday: found.usedToday, dailyLimit: found.dailyLimit } });
+                usedToday: found.usedToday, dailyLimit: found.dailyLimit,
+                note: SOCIAL_RESULT_NOTE } });
               return;
             }
             send(200, { result: db.transaction(() => runAgentTool(call.name, args, clock()))() });
