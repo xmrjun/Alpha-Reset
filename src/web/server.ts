@@ -17,7 +17,9 @@ import { dataQuality, queryAlertGroups, queryOutcomes } from './queries.js';
 import { AGENT_TOOLS, ALERTS_RESULT_NOTE, AgentToolError, POOL_RESULT_NOTE, SOCIAL_RESULT_NOTE,
   parseToolArgs } from './agent-tools.js';
 import { canonicalCa } from '../addresses.js';
+import { XapiError } from '../api/xapi-twitter.js';
 import { XapiTwitterClient } from '../api/xapi-twitter.js';
+import { createAgentAuditStore } from '../store/agent-audit.js';
 import { SocialLookup } from './social-lookup.js';
 import { latestObservationRound, readRpsDisplay, verifiedDisplaySeries, verifiedCalculationSeries } from './rps-display.js';
 import { createWebReadModel, type WebReadContext } from './read-context.js';
@@ -57,9 +59,11 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   // 就是一个用本站凭据付费的公开搜索服务。
   const trackedCa = db.prepare(
     'SELECT 1 FROM ca_pool WHERE ca = ? UNION ALL SELECT 1 FROM group_ca_history WHERE ca = ? LIMIT 1');
+  // 工具调用的证据链：花钱的动作必须可查证，配额也从这张表算（重启不清零）。
+  const audit = createAgentAuditStore(db);
   const social = opts.social ?? new SocialLookup({
     client: xapiKey ? new XapiTwitterClient({ apiKey: xapiKey }) : null,
-    clock, dailyLimit: 2000, perClientLimit: 50, cacheMs: 600_000,
+    clock, dailyLimit: 2000, perClientLimit: 50, cacheMs: 600_000, audit,
   });
   const reads = createWebReadModel(db, cfg);
   function statsAt(now: number, context = reads.readContext()): StatsResponse {
@@ -207,24 +211,40 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
           const body = await readJsonBody(request);
           if (agentPath === '/api/agent/tool') {
             const call = toolSchema.parse(body);
-            const args = parseToolArgs(call.name, call.arguments);
-            if (call.name === 'social_check') {
-              // 归一：同一个 EVM 地址大小写不同会变成两条缓存，等于同一份数据买两遍。
-              const ca = canonicalCa(String(args.ca));
-              // 只能问我们已经在追的币。真正的防线不是拦住攻击者，而是让他绕过配额之后
-              // 拿到的东西毫无价值 —— 池内的币本来就在公开页面上展示。
-              if (!trackedCa.get(ca, ca)) {
-                throw new AgentToolError('INVALID_ARGS', '该合约本系统从未追踪过');
+            // 记账从这里开始：参数还没校验，但工具名已经知道了。被拒的调用同样要留痕 ——
+            // 只记成功等于看不见攻击：并发爆破在成功日志里就是一堆正常查询。
+            // 这条 pending 记录同时就是 social_check 的额度占位。
+            const auditId = audit.begin({ at: clock(), visitor: clientKey(request), tool: call.name,
+              arg: JSON.stringify(call.arguments ?? {}), cached: false });
+            try {
+              const args = parseToolArgs(call.name, call.arguments);
+              if (call.name === 'social_check') {
+                // 归一：同一个 EVM 地址大小写不同会变成两条缓存，等于同一份数据买两遍。
+                const ca = canonicalCa(String(args.ca));
+                // 只能问我们已经在追的币。真正的防线不是拦住攻击者，而是让他绕过配额之后
+                // 拿到的东西毫无价值 —— 池内的币本来就在公开页面上展示。
+                if (!trackedCa.get(ca, ca)) {
+                  throw new AgentToolError('INVALID_ARGS', '该合约本系统从未追踪过');
+                }
+                // 走外部接口且计费，不进 db 事务；配额按来访 IP 分摊。
+                const found = await social.check(ca, clientKey(request));
+                audit.settle(auditId, 'ok', found.costUsd, found.cached);
+                // 不回 usedToday/dailyLimit：那等于把预算余额实时播报给匿名调用方，
+                // 让对方一眼看出攻击有没有奏效。
+                send(200, { result: { ...found.quality, cached: found.cached,
+                  note: SOCIAL_RESULT_NOTE } });
+                return;
               }
-              // 走外部接口且计费，不进 db 事务；配额按来访 IP 分摊。
-              const found = await social.check(ca, clientKey(request));
-              // 不回 usedToday/dailyLimit：那等于把预算余额实时播报给匿名调用方，
-              // 让对方一眼看出攻击有没有奏效。
-              send(200, { result: { ...found.quality, cached: found.cached,
-                note: SOCIAL_RESULT_NOTE } });
-              return;
+              send(200, { result: db.transaction(() => runAgentTool(call.name, args, clock()))() });
+              audit.settle(auditId, 'ok');
+            } catch (error) {
+              // 分清是谁的问题：参数不合法、额度用尽、上游挂了，事后查因时完全不同。
+              audit.settle(auditId, error instanceof AgentToolError
+                ? (error.code === 'BUDGET_EXHAUSTED' ? 'budget_exhausted'
+                  : error.code === 'NOT_CONFIGURED' ? 'not_configured' : 'invalid_args')
+                : error instanceof XapiError ? 'upstream_failed' : 'error');
+              throw error;
             }
-            send(200, { result: db.transaction(() => runAgentTool(call.name, args, clock()))() });
             return;
           }
           // 哑代理：除了取出 key 放进 Authorization，请求体原样转发，响应原样回传。

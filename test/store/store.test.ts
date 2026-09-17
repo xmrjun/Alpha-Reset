@@ -25,10 +25,10 @@ test('数据库建表、索引、WAL 与迁移幂等，重启后保留数据', (
   assert.equal(db.pragma('user_version', { simple: true }), 7);
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'sqlite_sequence' ORDER BY name")
     .all() as { name: string }[];
-  assert.deepEqual(tables.map((row) => row.name), ['alert_outcomes', 'alerts', 'api_usage', 'breakout_moments', 'ca_pool', 'candles', 'group_ca_history', 'market_series', 'market_series_switches', 'runtime_state', 'series_candles', 'series_moments']);
+  assert.deepEqual(tables.map((row) => row.name), ['agent_tool_calls', 'alert_outcomes', 'alerts', 'api_usage', 'breakout_moments', 'ca_pool', 'candles', 'group_ca_history', 'market_series', 'market_series_switches', 'runtime_state', 'series_candles', 'series_moments']);
   const indices = db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'idx_%' ORDER BY name")
     .all() as { name: string }[];
-  assert.deepEqual(indices.map((row) => row.name), ['idx_alerts_ca_tag_t', 'idx_candles_ca_iv_t', 'idx_history_group', 'idx_history_mention', 'idx_market_series_active', 'idx_market_series_token', 'idx_outcomes_group', 'idx_outcomes_pending', 'idx_series_candles_t', 'idx_series_switches_asset']);
+  assert.deepEqual(indices.map((row) => row.name), ['idx_agent_tool_calls_quota', 'idx_agent_tool_calls_visitor', 'idx_alerts_ca_tag_t', 'idx_candles_ca_iv_t', 'idx_history_group', 'idx_history_mention', 'idx_market_series_active', 'idx_market_series_token', 'idx_outcomes_group', 'idx_outcomes_pending', 'idx_series_candles_t', 'idx_series_switches_asset']);
   createCandleStore(db).upsertCandles('a', '15m', [candle(0)]);
   db.close();
   const reopened = openDatabase(filename);

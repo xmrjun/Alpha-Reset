@@ -272,6 +272,21 @@ export function openDatabase(filename = 'data/alpha-reset.sqlite'): StoreDatabas
       reason TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_series_switches_asset ON market_series_switches(network, ca, switched_at);`);
+
+    // agent 工具调用的证据链。与上面那张表一样用 IF NOT EXISTS 无条件建 ——
+    // 放进版本化迁移块的话，已经是 version 7 的线上库永远不会执行到。
+    db.exec(`CREATE TABLE IF NOT EXISTS agent_tool_calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      at INTEGER NOT NULL,
+      visitor TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      arg_digest TEXT NOT NULL,
+      cached INTEGER NOT NULL,
+      cost_usd REAL,
+      outcome TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_quota ON agent_tool_calls(tool, at, outcome);
+    CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_visitor ON agent_tool_calls(tool, visitor, at);`);
     return db;
   } catch (error) {
     db.close();
