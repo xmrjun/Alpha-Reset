@@ -18,6 +18,8 @@ const next = at + 2 * quarter;
 
 const IN_POOL = '0x648a5382bdcf286e7ff5122d01a983db314e620a';
 const OUTSIDE = '0x1111111111111111111111111111111111111111';
+/** 曾被群里提到、但已经掉出当前观察池的 Solana 币。 */
+const ARCHIVED = '7vSG4GX8qz5V36noSde5Z9xV8xAXAGqivDyaNytPVDJf';
 
 function fakeSocial() {
   let calls = 0;
@@ -35,6 +37,8 @@ async function serve(t: TestContext, social: SocialLookup) {
   const pools = createPoolStore(db);
   const series = createSeriesStore(db);
   pools.upsertPool([poolItem(IN_POOL, { chain: 'arc' })], at);
+  db.prepare('INSERT INTO group_ca_history (ca, symbol, chain, group_name, first_mention_id, first_mention_at, synced_at)'
+    + ' VALUES (?,?,?,?,?,?,?)').run(ARCHIVED, 'Tulip', 'solana', 'g', 'm1', at, at);
   const identity = series.ensureSeries({ source: 'geckoterminal', network: 'arc', ca: IN_POOL,
     poolAddress: 'pool-x', currency: 'usd', formatVersion: 1 }, at);
   series.upsertCandles(identity.id, '15m', [candle(at - quarter, 10), candle(next - quarter, 20)]);
@@ -99,4 +103,19 @@ test('既有只读工具不受影响', async (t) => {
   const post = await serve(t, lookup);
   assert.equal((await post({ name: 'query_coverage', arguments: {} })).status, 200);
   assert.equal((await post({ name: 'query_pool', arguments: { limit: 5 } })).status, 200);
+});
+
+test('曾经追踪过但已掉出观察池的币仍然可以查，Solana 地址同样适用', async (t) => {
+  const { lookup, upstreamCalls } = fakeSocial();
+  const post = await serve(t, lookup);
+  const response = await post({ name: 'social_check', arguments: { ca: ARCHIVED } });
+  assert.equal(response.status, 200, '历史档案里的币不该被拒');
+  assert.equal(upstreamCalls(), 1);
+});
+
+test('从没追踪过的地址仍然拒绝，范围放宽不等于开放搜索', async (t) => {
+  const { lookup, upstreamCalls } = fakeSocial();
+  const post = await serve(t, lookup);
+  assert.equal((await post({ name: 'social_check', arguments: { ca: OUTSIDE } })).status, 400);
+  assert.equal(upstreamCalls(), 0);
 });

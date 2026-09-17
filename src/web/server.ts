@@ -14,7 +14,8 @@ import { readRoundInputs } from '../store/snapshot.js';
 import { createUsageStore } from '../store/usage.js';
 import type { AlertTag } from '../types.js';
 import { dataQuality, queryAlertGroups, queryOutcomes } from './queries.js';
-import { AGENT_TOOLS, AgentToolError, SOCIAL_RESULT_NOTE, parseToolArgs } from './agent-tools.js';
+import { AGENT_TOOLS, ALERTS_RESULT_NOTE, AgentToolError, POOL_RESULT_NOTE, SOCIAL_RESULT_NOTE,
+  parseToolArgs } from './agent-tools.js';
 import { canonicalCa } from '../addresses.js';
 import { XapiTwitterClient } from '../api/xapi-twitter.js';
 import { SocialLookup } from './social-lookup.js';
@@ -51,8 +52,11 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   const clock = opts.now ?? Date.now;
   // 唯一会花钱的工具：没有 XAPI_KEY 就整个不可用，而不是退化成空结果。
   const xapiKey = process.env.XAPI_KEY;
-  // social_check 只允许查观察池成员，这条语句在每次调用前确认归属。
-  const poolMembership = db.prepare('SELECT 1 FROM ca_pool WHERE ca = ? LIMIT 1');
+  // social_check 只允许查我们追踪过的币：当前观察池，或群里曾经提到、现已归档的。
+  // 掉出池子的币照样值得复盘，但「从没见过的地址」必须挡住 —— 否则这个端点
+  // 就是一个用本站凭据付费的公开搜索服务。
+  const trackedCa = db.prepare(
+    'SELECT 1 FROM ca_pool WHERE ca = ? UNION ALL SELECT 1 FROM group_ca_history WHERE ca = ? LIMIT 1');
   const social = opts.social ?? new SocialLookup({
     client: xapiKey ? new XapiTwitterClient({ apiKey: xapiKey }) : null,
     clock, dailyLimit: 2000, perClientLimit: 50, cacheMs: 600_000,
@@ -137,10 +141,22 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   function runAgentTool(name: string, args: Record<string, unknown>, now: number): unknown {
     if (name === 'query_pool') {
       const { limit, ...rest } = args as { limit: number; chain?: string; group?: string; hit?: '0' | '1' };
-      return db.transaction(() => poolAt(now, { ...rest, sort: '-lastAlertAt', limit }))();
+      const body = db.transaction(() => poolAt(now, { ...rest, sort: '-lastAlertAt', limit }))();
+      // 只给布尔值的话，模型没有任何办法知道「市值区间是多少」，解释时只能编一个。
+      // A4 早就一并返回 minCoverage 了，A1~A3 同理。
+      return { ...body, note: POOL_RESULT_NOTE, thresholds: {
+        a1_minListingHours: cfg.a1_age.minHours,
+        a2_marketCapMin: cfg.a2_scale.marketCapMin,
+        a2_marketCapMax: cfg.a2_scale.marketCapMax,
+        a2_liquidityMin: cfg.a2_scale.liquidityMin,
+        a3_lookbackBars: cfg.a3_breakout.lookbackBars,
+        a3_minBarsSinceHigh: cfg.pullback.minBarsSinceHigh,
+        a3_maxRsi: cfg.pullback.maxRsi,
+      } };
     }
     if (name === 'query_alerts') {
-      return queryAlertGroups(db, args as Parameters<typeof queryAlertGroups>[1]);
+      const body = queryAlertGroups(db, args as Parameters<typeof queryAlertGroups>[1]);
+      return { ...body, note: ALERTS_RESULT_NOTE };
     }
     if (name === 'query_coverage') {
       const quality = db.transaction(() => statsAt(now))().dataQuality;
@@ -197,8 +213,8 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
               const ca = canonicalCa(String(args.ca));
               // 只能问我们已经在追的币。真正的防线不是拦住攻击者，而是让他绕过配额之后
               // 拿到的东西毫无价值 —— 池内的币本来就在公开页面上展示。
-              if (!poolMembership.get(ca)) {
-                throw new AgentToolError('INVALID_ARGS', '该合约不在观察池内');
+              if (!trackedCa.get(ca, ca)) {
+                throw new AgentToolError('INVALID_ARGS', '该合约本系统从未追踪过');
               }
               // 走外部接口且计费，不进 db 事务；配额按来访 IP 分摊。
               const found = await social.check(ca, clientKey(request));

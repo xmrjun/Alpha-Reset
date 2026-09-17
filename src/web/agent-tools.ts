@@ -75,12 +75,32 @@ export const SOCIAL_RESULT_NOTE =
   '本结果不含推文原文，请勿评价任何推文的写法或语气，也勿推断某条推是谁发的；'
   + '社交面不参与 A1~A4 告警判定，不要用它解释某个币为何没告警。';
 
+/**
+ * 随 query_pool 结果返回。displayRps 可能来自上一轮而 rpsScores 全是 null，
+ * 模型一定会报那个有数字的，并说成「A4 用的排名」—— 和把社交热度说成告警原因
+ * 是同一类错误：拿不参与判定的数字去解释判定结果。
+ */
+export const POOL_RESULT_NOTE =
+  'displayRps 仅供显示、可能来自上一轮，不参与 A4 判定；calculationPending 为真表示该成员本轮尚未计算，'
+  + '此时不要用 displayRps 代替 rpsScores。groupName 只表示某个群提到过这个合约，不等于该群在推荐它。';
+
+/**
+ * 随 query_alerts 结果返回。这个工具吐的是事后收益率与胜率，对一个公开可访问的
+ * 加密货币站点，把它讲成预测是风险最高的一面。controlSince 之前的统计只有触发组、
+ * 没有对照组，必须让模型看见这句话，否则它会宣称「跑赢大盘」。
+ */
+export const ALERTS_RESULT_NOTE =
+  '这里的胜率与收益率是事后统计，不是预测，不得据此给出任何买卖、仓位或入场时机建议；'
+  + 'controlSince 之前的轮次只有触发组、没有对照组，不能当作跑赢基准的证据。';
+
 /** 描述要写清「什么时候该调」，模型只能靠这段话判断。 */
 export const AGENT_TOOLS: readonly AgentToolDefinition[] = [
   {
     name: 'query_pool',
     description: '查询当前观察池成员：符号、链、市值、流动性、来源群、以及 A1~A4 四个条件各自是否通过。'
-      + '回答「哪些币接近触发」「某个币为什么没告警」「池子里有哪些 solana 的币」这类问题时使用。',
+      + '回答「哪些币接近触发」「某个币为什么没告警」「池子里有哪些 solana 的币」这类问题时使用。'
+      + '结果里一并带上 thresholds，即 A1~A3 各自的门槛值 —— 解释某个条件为什么没过时'
+      + '必须引用这些门槛值，不要自己编区间。',
     parameters: {
       type: 'object',
       properties: {
