@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AGENT_MODELS, AgentError, DEFAULT_MODEL, MAX_ROUNDS, loadAgentTools, runAgent,
+  AGENT_MODELS, AgentError, DEFAULT_MODEL, MAX_ROUNDS, MODEL_CONTEXT, loadAgentTools, runAgent,
   type AgentStatus, type AgentTool, type ChatMessage,
 } from './agent.js';
 import { useCopy } from './i18n.js';
@@ -54,7 +54,8 @@ function renderContent(text: string) {
   });
 }
 
-export function AgentPanel() {
+/** standalone：作为独立页面渲染时强制展开——用户是专门点进来的，没有再折叠一次的道理。 */
+export function AgentPanel({ standalone = false }: { standalone?: boolean } = {}) {
   const { t, lang } = useCopy();
   const [open, setOpen] = useState(initialOpen);
   const [savedKey, setSavedKey] = useState(() => readStored(KEY_STORAGE));
@@ -169,7 +170,7 @@ export function AgentPanel() {
   const unavailable = toolsError?.kind === 'unavailable';
 
   return <section className="panel agent-panel" aria-label={t.agentTitle}>
-    <details open={open} onToggle={(event) => {
+    <details open={standalone || open} onToggle={(event) => {
       const next = event.currentTarget.open;
       setOpen(next);
       writeStored(OPEN_STORAGE, next ? '1' : '0');
@@ -203,9 +204,17 @@ export function AgentPanel() {
         <label className="agent-model-field">
           <span>{t.agentModelLabel}</span>
           <select value={model} onChange={(event) => { setModel(event.target.value); writeStored(MODEL_STORAGE, event.target.value); }}>
-            {AGENT_MODELS.map((name) => <option key={name} value={name}>
-              {name}{name.endsWith(':free') ? ` · ${t.agentModelFree}` : ` · ${t.agentModelPaid}`}
-            </option>)}
+            {/* 分组而不是平铺：清单变长后，用户需要一眼看出哪些不花钱。 */}
+            <optgroup label={t.agentModelFree}>
+              {AGENT_MODELS.filter((name) => name.endsWith(':free')).map((name) => <option key={name} value={name}>
+                {name}{MODEL_CONTEXT[name] ? ` · ${MODEL_CONTEXT[name]}` : ''}
+              </option>)}
+            </optgroup>
+            <optgroup label={t.agentModelPaid}>
+              {AGENT_MODELS.filter((name) => !name.endsWith(':free')).map((name) => <option key={name} value={name}>
+                {name}{MODEL_CONTEXT[name] ? ` · ${MODEL_CONTEXT[name]}` : ''}
+              </option>)}
+            </optgroup>
           </select>
         </label>
       </div>

@@ -268,14 +268,13 @@ function App() {
   if (path.startsWith('/ca/')) { try { ca = decodeURIComponent(path.slice(4)); } catch { /* 显示未找到 */ } }
   return <LangContext.Provider value={{ lang, t, setLang }}>
     <header className="site-header"><a className="brand" href="/" aria-label={t.brandHome}><span className="brand-icon">α</span><span>ALPHA<span className="brand-light"> / RESET</span></span></a>
-    <nav aria-label={t.navMain}><a href="/" aria-current={path === '/' || ca !== null ? 'page' : undefined}>{t.navOverview}</a><a href="/alerts" aria-current={path === '/alerts' ? 'page' : undefined}>{t.navAlerts}</a></nav>
+    <nav aria-label={t.navMain}><a href="/" aria-current={path === '/' || ca !== null ? 'page' : undefined}>{t.navOverview}</a><a href="/alerts" aria-current={path === '/alerts' ? 'page' : undefined}>{t.navAlerts}</a><a href="/chat" aria-current={path === '/chat' ? 'page' : undefined}>{t.navChat}</a></nav>
     <div className="header-actions"><span className="local-label">{t.localBadge}</span>
       <button aria-label={t.langToggleLabel} onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}>{t.langToggle}</button>
       <button aria-label={t.themeLabel} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? t.themeDark : t.themeLight}</button></div></header>
-    <main><ErrorBox message={stats.error} retry={stats.reload} />{path === '/' ? <Overview stats={stats.data} /> : path === '/alerts' ? <AlertHistory /> : ca ? <Detail ca={ca} theme={theme} />
-      : <Empty title={t.notFoundTitle} description={t.notFoundDesc} />}
-      {/* 聊天面板固定在每个页面最底部：它问的是全局数据，跟当前看的是哪一页无关。 */}
-      <AgentPanel /></main>
+    <main><ErrorBox message={stats.error} retry={stats.reload} />{path === '/' ? <Overview stats={stats.data} /> : path === '/alerts' ? <AlertHistory />
+      : path === '/chat' ? <AgentPanel standalone /> : ca ? <Detail ca={ca} theme={theme} />
+      : <Empty title={t.notFoundTitle} description={t.notFoundDesc} />}</main>
     <footer><span>ALPHA / RESET</span><span>{t.footerTagline}</span><span>{t.footerSources((stats.data?.dataQuality.enabledSources ?? ['geckoterminal']).map((source) => source === 'gmgn' ? 'GMGN' : source === 'binance' ? 'Binance Web3' : 'GeckoTerminal').join(' / '))}</span></footer>
   </LangContext.Provider>;
 }

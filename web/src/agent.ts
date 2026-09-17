@@ -10,13 +10,44 @@
  */
 
 /** 已实测支持工具调用的模型。末位是付费兜底，免费额度撞限时降级到同名非 :free 变体。 */
+/**
+ * 全部取自 Orbio 模型目录中 supported_parameters 含 tools 的条目 —— 不支持工具调用的
+ * 模型在这里毫无意义，它无法查数据，只会凭空编。
+ * 免费组排在前面：撞额度会自动回退到付费变体，所以默认选免费不会卡住对话。
+ * 已实测剔除：thinkingmachines/inkling* 上游不可用；cohere/north-mini-code 即使给了
+ * 明确要求用工具的 system 提示仍只回文本 —— 不调工具的模型会一本正经地编数字，
+ * 比少几个选项危险得多。加新模型前请先实测它是否真的发起 tool_calls。
+ */
 export const AGENT_MODELS = [
   'nvidia/nemotron-3.5-lightning:free',
-  'nex-agi/nex-n2.5-pro:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'dots-studio/dots-3-note-preview:free',
   'inclusionai/ling-3.0-flash-vl:free',
+  'nex-agi/nex-n2.5-pro:free',
+  'nex-agi/nex-n2.5-mini:free',
   'google/gemma-4-31b-it:free',
+  'google/gemma-4-26b-a4b-it:free',
   'openai/gpt-4o-mini',
+  'google/gemini-3.8-flash',
+  'x-ai/grok-4.20',
+  'anthropic/claude-fable-5.1',
 ] as const;
+
+/** 上下文长度仅用于下拉里的选择提示，不参与任何逻辑。 */
+export const MODEL_CONTEXT: Readonly<Record<string, string>> = {
+  'nvidia/nemotron-3.5-lightning:free': '1M',
+  'nvidia/nemotron-3-super-120b-a12b:free': '262K',
+  'dots-studio/dots-3-note-preview:free': '512K',
+  'inclusionai/ling-3.0-flash-vl:free': '262K',
+  'nex-agi/nex-n2.5-pro:free': '262K',
+  'nex-agi/nex-n2.5-mini:free': '262K',
+  'google/gemma-4-31b-it:free': '262K',
+  'google/gemma-4-26b-a4b-it:free': '262K',
+  'openai/gpt-4o-mini': '128K',
+  'google/gemini-3.8-flash': '1M',
+  'x-ai/grok-4.20': '2M',
+  'anthropic/claude-fable-5.1': '1M',
+};
 
 export const DEFAULT_MODEL = AGENT_MODELS[0];
 
