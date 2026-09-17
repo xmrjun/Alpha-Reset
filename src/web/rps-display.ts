@@ -4,7 +4,8 @@ import type { StrategyConfig } from '../config/strategy.js';
 import { INTERVAL_MS } from '../market.js';
 import type { StoreDatabase } from '../store/db.js';
 import { createRuntimeStore, isRoundFresh, strategyKey, type RoundMember, type RoundSnapshot } from '../store/runtime.js';
-import { createSeriesStore, isSupportedMarketSeries, type MarketSeries } from '../store/series.js';
+import { createSeriesStore, isSupportedMarketSeries, TOKEN_SOURCES,
+  type MarketSeries, type SupportedMarketSeries } from '../store/series.js';
 import type { WebReadContext } from './read-context.js';
 import type { DisplayRps, RpsDisplaySummary } from './contracts.js';
 
@@ -24,7 +25,7 @@ export function latestObservationRound(db: StoreDatabase, cfg: StrategyConfig, c
 }
 
 /** 页面可发现刚入库的活动序列；绝不认领 legacy，且不修改规则输入。 */
-export function verifiedDisplaySeries(db: StoreDatabase, member: RoundMember, context?: WebReadContext): MarketSeries | null {
+export function verifiedDisplaySeries(db: StoreDatabase, member: RoundMember, context?: WebReadContext): SupportedMarketSeries | null {
   const chain = network(member);
   if (!chain || member.seriesId === undefined) return null;
   const store = context?.series ?? createSeriesStore(db);
@@ -72,13 +73,15 @@ export function readRpsDisplay(db: StoreDatabase, cfg: StrategyConfig, now: numb
     if (!identity) continue;
     const computedIdentity = verifiedCalculationSeries(db, computed, context);
     // 等待新 T 的 GMGN 首次绑定时，旧值仍只能来自当前 active Gecko 同一序列。
-    const awaitingGmgn = computed.seriesId === null && computed.plannedSource === 'gmgn'
+    // 等待新 T 首次绑定 token 源时，旧值仍只能来自当前 active Gecko 的同一序列。
+    const awaitingToken = computed.seriesId === null
+      && (TOKEN_SOURCES as readonly string[]).includes(computed.plannedSource ?? '')
       && identity.source === 'geckoterminal' && network(computed) === identity.network;
-    if (!awaitingGmgn && computedIdentity?.id !== identity.id) continue;
+    if (!awaitingToken && computedIdentity?.id !== identity.id) continue;
     let previous = old.get(ca);
     let sourceRound = saved;
     let sourcePoolSize = saved.members.length;
-    if (awaitingGmgn && (previous?.seriesId !== identity.id || !current || saved.startedAt >= current.startedAt)) {
+    if (awaitingToken && (previous?.seriesId !== identity.id || !current || saved.startedAt >= current.startedAt)) {
       const fallback = runtime.getRpsFallbackRound(identity.id);
       if (!fallback || fallback.strategyKey !== strategyKey(cfg) || !fallback.boardComplete
         || fallback.completedAt === null || !['complete', 'partial'].includes(fallback.status)
@@ -88,7 +91,7 @@ export function readRpsDisplay(db: StoreDatabase, cfg: StrategyConfig, now: numb
       previous = fallback.members.find(item => canonicalCa(item.pool.ca) === ca);
     }
     if (previous?.seriesId !== identity.id || network(previous) !== identity.network
-      || (awaitingGmgn && (!current || sourceRound.startedAt >= current.startedAt))) continue;
+      || (awaitingToken && (!current || sourceRound.startedAt >= current.startedAt))) continue;
     const sourceSummary = sourceRound === saved ? summary : {
       state: isRoundFresh(sourceRound, cfg, now) ? 'previous' as const : 'stale' as const,
       asOf: Math.floor(sourceRound.startedAt / INTERVAL_MS['15m']) * INTERVAL_MS['15m'],
@@ -96,7 +99,7 @@ export function readRpsDisplay(db: StoreDatabase, cfg: StrategyConfig, now: numb
     };
     byCa.set(ca, {
       state: sourceSummary.state, asOf: sourceSummary.asOf, computedAt: sourceSummary.computedAt,
-      poolSize: sourcePoolSize, source: identity.source === 'gmgn' ? 'gmgn' : 'geckoterminal', scores: previous.rpsScores,
+      poolSize: sourcePoolSize, source: identity.source, scores: previous.rpsScores,
       ...((previous.rpsDisplayBounds ?? previous.rpsBounds)
         ? { bounds: previous.rpsDisplayBounds ?? previous.rpsBounds! } : {}),
     });

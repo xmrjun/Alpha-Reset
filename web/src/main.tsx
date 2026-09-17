@@ -46,6 +46,7 @@ function Overview({ stats }: { stats: StatsResponse | null }) {
   const calculation = quality?.calculation;
   const collection = quality?.collection;
   const gmgn = quality?.gmgn;
+  const binance = quality?.binance;
   const collectingCount = collection?.memberCount ?? quality?.monitored ?? 0;
   const latestSweepMinutes = observation && collection?.effectiveRpm
     ? observation.memberCount / collection.effectiveRpm : null;
@@ -97,20 +98,23 @@ function Overview({ stats }: { stats: StatsResponse | null }) {
         <p>{!display && t.collectingNoScore}{t.collectingCadence(mainMinutes, revisionMinutes)}</p>
       </div></div>
     )}
-    {(calculation?.sources || gmgn?.enabled) && <section className="panel market-sources" aria-label={t.sourcesTitle}>
+    {(calculation?.sources || gmgn?.enabled || binance?.enabled) && <section className="panel market-sources" aria-label={t.sourcesTitle}>
       <div className="panel-heading"><h2>{t.sourcesTitle}</h2><span>{t.sourcesHint}</span></div>
       <div className="market-sources-body">
-        {calculation?.sources && <p className="scoring-sources">{t.sourcesBreakdown(number(calculation.sources.gmgn), number(calculation.sources.geckoterminal), number(calculation.sources.unbound), dateTime(calculation.asOf, t))}</p>}
-        {gmgn?.enabled && <div className="gmgn-status" role="status" data-status={gmgn.status ?? 'waiting'}>
-          <p><strong>GMGN · {gmgn.status === 'running' ? t.gmgnRunning : gmgn.status === 'cooldown' ? t.gmgnCooldown
-            : gmgn.status === 'auth_error' ? t.gmgnAuthError : gmgn.status === 'disabled' ? t.gmgnDisabled
-            : gmgn.status === 'idle' ? t.gmgnIdle : t.gmgnUnknown}</strong>{t.gmgnRpm(number(gmgn.effectiveRpm))}</p>
-          {gmgn.status === 'cooldown' && gmgn.cooldownUntil > 0 && <p>{t.gmgnCooldownUntil(dateTime(gmgn.cooldownUntil, t))}</p>}
-          <p>{t.gmgnRequests(number(gmgn.requests), number(gmgn.recentRequests), number(gmgn.historyRequests))}</p>
-          <p className="gmgn-backfill">{t.gmgnBackfill(number(gmgn.assetsWithHistory), number(gmgn.backfillPending))}</p>
-          <p>{t.gmgnCaveat}</p>
-          <p>{t.gmgnUpdated(dateTime(gmgn.updatedAt, t))}</p>
-        </div>}
+        {calculation?.sources && <p className="scoring-sources">{t.sourcesBreakdown(number(calculation.sources.gmgn), number(calculation.sources.geckoterminal), number(calculation.sources.binance), number(calculation.sources.unbound), dateTime(calculation.asOf, t))}</p>}
+        {/* 每个 token 源一块状态面板；承担份额大的排前面，缺任何一块都会让人看不见主力源在做什么。 */}
+        {([{ name: 'Binance Web3', s: binance }, { name: 'GMGN', s: gmgn }] as const)
+          .map(({ name, s }) => s?.enabled ? (
+          <div key={name} className="gmgn-status" role="status" data-status={s.status ?? 'waiting'}>
+            <p><strong>{name} · {s.status === 'running' ? t.gmgnRunning : s.status === 'cooldown' ? t.gmgnCooldown
+              : s.status === 'auth_error' ? t.gmgnAuthError : s.status === 'disabled' ? t.gmgnDisabled
+              : s.status === 'idle' ? t.gmgnIdle : t.gmgnUnknown}</strong>{t.gmgnRpm(number(s.effectiveRpm))}</p>
+            {s.status === 'cooldown' && s.cooldownUntil > 0 && <p>{t.gmgnCooldownUntil(dateTime(s.cooldownUntil, t))}</p>}
+            <p>{t.gmgnRequests(number(s.requests), number(s.recentRequests), number(s.historyRequests))}</p>
+            <p className="gmgn-backfill">{t.gmgnBackfill(number(s.assetsWithHistory), number(s.backfillPending))}</p>
+            <p>{t.gmgnCaveat}</p>
+            <p>{t.gmgnUpdated(dateTime(s.updatedAt, t))}</p>
+          </div>) : null)}
       </div>
     </section>}
     {display && <section className="panel rps-summary" aria-label={t.rpsSummaryTitle}>
@@ -217,7 +221,8 @@ function Detail({ ca, theme }: { ca: string; theme: string }) {
         ? <PriceChart data={data} period={period} theme={theme} /> : <Empty title={t.emptyChartTitle} description={t.emptyChartDesc} />}
     </section><aside><section className="panel asset-info"><h2>{t.assetInfo}</h2><dl><dt>{t.fieldMarketCap}</dt><dd>{money(data?.pool.marketCap)}</dd>
       <dt>{t.fieldLiquidity}</dt><dd>{money(data?.pool.liquidity)}</dd><dt>{t.fieldVolume}</dt><dd>{money(data?.pool.volume24h)}</dd>
-      <dt>{t.fieldSource}</dt><dd>{data?.marketSeries ? (data.marketSeries.source === 'gmgn' ? t.sourceGmgn : t.sourceGecko) : t.sourceWaiting}</dd>
+      <dt>{t.fieldSource}</dt><dd>{data?.marketSeries ? (data.marketSeries.source === 'gmgn' ? t.sourceGmgn
+        : data.marketSeries.source === 'binance' ? t.sourceBinance : t.sourceGecko) : t.sourceWaiting}</dd>
       <dt>{t.fieldEarliestBar}</dt><dd>{dateTime(data?.historyStartedAt, t)}</dd>
       {data?.marketSeries?.source === 'geckoterminal' && data.marketSeries.poolAddress && <><dt>{t.fieldPinnedPair}</dt><dd><code className="series-address">{data.marketSeries.poolAddress}</code></dd></>}
       <dt>{t.fieldListedAt}</dt><dd>{dateTime(data?.pool.listedAt, t)}</dd><dt>{t.fieldFirstSeen}</dt><dd>{dateTime(data?.pool.firstSeenAt, t)}</dd>
@@ -268,7 +273,7 @@ function App() {
       <button aria-label={t.themeLabel} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? t.themeDark : t.themeLight}</button></div></header>
     <main><ErrorBox message={stats.error} retry={stats.reload} />{path === '/' ? <Overview stats={stats.data} /> : path === '/alerts' ? <AlertHistory /> : ca ? <Detail ca={ca} theme={theme} />
       : <Empty title={t.notFoundTitle} description={t.notFoundDesc} />}</main>
-    <footer><span>ALPHA / RESET</span><span>{t.footerTagline}</span><span>{t.footerSources((stats.data?.dataQuality.enabledSources ?? ['geckoterminal']).map((source) => source === 'gmgn' ? 'GMGN' : 'GeckoTerminal').join(' / '))}</span></footer>
+    <footer><span>ALPHA / RESET</span><span>{t.footerTagline}</span><span>{t.footerSources((stats.data?.dataQuality.enabledSources ?? ['geckoterminal']).map((source) => source === 'gmgn' ? 'GMGN' : source === 'binance' ? 'Binance Web3' : 'GeckoTerminal').join(' / '))}</span></footer>
   </LangContext.Provider>;
 }
 

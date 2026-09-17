@@ -93,8 +93,8 @@ const zh = {
 
   sourcesTitle: '评分来源与采集状态',
   sourcesHint: '各来源独立限速与积累历史',
-  sourcesBreakdown: (gmgn: string, gecko: string, unbound: string, asOf: string) =>
-    `本轮正式评分来源：GMGN ${gmgn} 个 · GeckoTerminal ${gecko} 个 · 未绑定 ${unbound} 个。`
+  sourcesBreakdown: (gmgn: string, gecko: string, binance: string, unbound: string, asOf: string) =>
+    `本轮正式评分来源：Binance Web3 ${binance} 个 · GMGN ${gmgn} 个 · GeckoTerminal ${gecko} 个 · 未绑定 ${unbound} 个。`
     + `按收盘基准 ${asOf} 的实际序列统计，绑定来源不代表五档数据已齐。`,
   gmgnRunning: '采集中', gmgnCooldown: '限流冷却', gmgnAuthError: '鉴权失败，采集暂停',
   gmgnDisabled: '采集未启动', gmgnIdle: '等待下次采集', gmgnUnknown: '等待采集器状态',
@@ -104,7 +104,7 @@ const zh = {
     `累计采集任务 ${total} 次 · 近期行情 ${recent} 次 · 历史分段 ${history} 次`,
   gmgnBackfill: (done: string, pending: string) => `历史范围已查询 ${done} 个 · 队列内待回补 ${pending} 个`,
   gmgnCaveat: '历史范围已查询不代表连续 K 线完整；无交易时段、缺失端点仍可能使部分评分等待。待回补仅统计已进入采集队列的资产。',
-  gmgnUpdated: (at: string) => `状态更新：${at}。任务次数不含内部重试；网络重试仍占用限速预算。两路进度不能直接相加为全池已采齐。`,
+  gmgnUpdated: (at: string) => `状态更新：${at}。任务次数不含内部重试；网络重试仍占用限速预算。各路进度不能直接相加为全池已采齐。`,
 
   rpsSummaryTitle: '最近已完成的 RPS 计算',
   rpsStateCurrent: '本轮评分', rpsStatePrevious: '上一轮评分', rpsStateStale: '已过期评分',
@@ -179,6 +179,7 @@ const zh = {
   fieldMarketCap: '市值', fieldLiquidity: '流动性', fieldVolume: '24h 成交量',
   fieldSource: '行情来源',
   sourceGmgn: 'GMGN · USD · 代币 K 线', sourceGecko: 'GeckoTerminal · USD · 固定交易对',
+  sourceBinance: 'Binance Web3 · USD · 代币 K 线',
   sourceWaiting: '等待验证',
   fieldEarliestBar: '最早已存 K 线', fieldPinnedPair: '固定交易对',
   fieldListedAt: '上市时间（估算）', fieldFirstSeen: '首次观测',
@@ -207,7 +208,7 @@ const zh = {
   rpsCtxPrevious: '，上一轮数据，仅供参考',
   rpsCtxStale: '，已过期数据，仅供参考',
   rpsCellCurrent: '本轮', rpsCellPrevious: '上一轮', rpsCellStale: '已过期',
-  rpsSourceGmgn: 'GMGN · 代币', rpsSourceGecko: 'GeckoTerminal · 固定池',
+  rpsSourceGmgn: 'GMGN · 代币', rpsSourceGecko: 'GeckoTerminal · 固定池', rpsSourceBinance: 'Binance Web3 · 代币',
   rpsStampTitle: (label: string, asOf: string, computedAt: string, poolSize: number, note: string) =>
     `${label}评分；收盘基准：${asOf}；计算完成：${computedAt}；原观察池 ${poolSize} 个 CA${note}`,
   rpsStampNotCurrent: '；仅供参考，不参与本轮判定',
@@ -336,8 +337,8 @@ const en: Copy = {
 
   sourcesTitle: 'Scoring sources and collection status',
   sourcesHint: 'Each source keeps its own rate limit and history',
-  sourcesBreakdown: (gmgn: string, gecko: string, unbound: string, asOf: string) =>
-    `Scoring sources this round: GMGN ${gmgn} · GeckoTerminal ${gecko} · unbound ${unbound}. `
+  sourcesBreakdown: (gmgn: string, gecko: string, binance: string, unbound: string, asOf: string) =>
+    `Scoring sources this round: Binance Web3 ${binance} · GMGN ${gmgn} · GeckoTerminal ${gecko} · unbound ${unbound}. `
     + `Counted from the actual series at close baseline ${asOf}; a bound source does not mean all five windows have data.`,
   gmgnRunning: 'collecting', gmgnCooldown: 'rate-limit cooldown', gmgnAuthError: 'auth failed, collection paused',
   gmgnDisabled: 'collection not started', gmgnIdle: 'waiting for next pass', gmgnUnknown: 'waiting for collector status',
@@ -347,7 +348,7 @@ const en: Copy = {
     `${total} collection tasks total · ${recent} recent quotes · ${history} history slices`,
   gmgnBackfill: (done: string, pending: string) => `${done} assets with history queried · ${pending} queued for backfill`,
   gmgnCaveat: 'A queried history range does not mean the candles are continuous; quiet periods and missing endpoints can still leave scores pending. Backfill counts only assets already in the queue.',
-  gmgnUpdated: (at: string) => `Status updated: ${at}. Task counts exclude internal retries, though retries still consume the rate budget. The two pipelines cannot simply be added up as full coverage.`,
+  gmgnUpdated: (at: string) => `Status updated: ${at}. Task counts exclude internal retries, though retries still consume the rate budget. The pipelines cannot simply be added up as full coverage.`,
 
   rpsSummaryTitle: 'Most recent completed RPS calculation',
   rpsStateCurrent: 'Current round', rpsStatePrevious: 'Previous round', rpsStateStale: 'Stale',
@@ -422,6 +423,7 @@ const en: Copy = {
   fieldMarketCap: 'Market cap', fieldLiquidity: 'Liquidity', fieldVolume: '24h volume',
   fieldSource: 'Market source',
   sourceGmgn: 'GMGN · USD · token candles', sourceGecko: 'GeckoTerminal · USD · pinned pair',
+  sourceBinance: 'Binance Web3 · USD · token candles',
   sourceWaiting: 'Awaiting verification',
   fieldEarliestBar: 'Earliest stored candle', fieldPinnedPair: 'Pinned pair',
   fieldListedAt: 'Listed at (estimated)', fieldFirstSeen: 'First observed',
@@ -450,7 +452,7 @@ const en: Copy = {
   rpsCtxPrevious: ', previous round, for reference only',
   rpsCtxStale: ', stale data, for reference only',
   rpsCellCurrent: 'Current', rpsCellPrevious: 'Previous', rpsCellStale: 'Stale',
-  rpsSourceGmgn: 'GMGN · token', rpsSourceGecko: 'GeckoTerminal · pinned pool',
+  rpsSourceGmgn: 'GMGN · token', rpsSourceGecko: 'GeckoTerminal · pinned pool', rpsSourceBinance: 'Binance Web3 · token',
   rpsStampTitle: (label: string, asOf: string, computedAt: string, poolSize: number, note: string) =>
     `${label} scores; close baseline ${asOf}; computed at ${computedAt}; original watchlist ${poolSize} tokens${note}`,
   rpsStampNotCurrent: '; for reference only, not used in this round',

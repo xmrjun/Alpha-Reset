@@ -82,7 +82,7 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
       } : null;
       // 名单以最新完整发现为准；已有计算保留当时的身份/规模，不能从 ca_pool 归档覆盖。
       return { ...(matches && previous ? { ...previous.pool, ca } : { ...member.pool, ca }),
-        scoreSource: matches && (priorIdentity?.source === 'gmgn' || priorIdentity?.source === 'geckoterminal') ? priorIdentity.source : null,
+        scoreSource: matches && (priorIdentity?.source === 'gmgn' || priorIdentity?.source === 'binance' || priorIdentity?.source === 'geckoterminal') ? priorIdentity.source : null,
         rpsScores: fresh && previous ? previous.rpsScores : emptyScores(),
         displayRps: display.byCa.get(ca) ?? null, calculationPending: !matches,
         ...(fresh && previous?.rpsBounds ? { rpsBounds: previous.rpsBounds } : {}), tags: result?.tags ?? [],

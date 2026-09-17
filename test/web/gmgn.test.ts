@@ -70,7 +70,7 @@ test('新 T 改用 GMGN 时，观察缓存仍是 Gecko 也立即展示本 T 来�
   assert.equal(row.scoreSource, 'gmgn'); assert.equal(row.calculationPending, false);
   assert.equal(row.rpsScores.r16, 73); assert.equal(row.displayRps.scores.r16, 73);
   assert.equal(row.displayRps.asOf, next); assert.deepEqual(row.tags, []);
-  assert.deepEqual((await get('/api/stats')).dataQuality.calculation.sources, { gmgn: 1, geckoterminal: 0, unbound: 0 });
+  assert.deepEqual((await get('/api/stats')).dataQuality.calculation.sources, { gmgn: 1, geckoterminal: 0, binance: 0, unbound: 0 });
   const detail = await get('/api/ca/a');
   assert.equal(detail.marketSeries.source, 'gmgn'); assert.equal(detail.marketSeries.poolAddress, null);
 });
@@ -86,7 +86,7 @@ test('同 T 仍按冻结 Gecko 读取，活动 GMGN 不能认领其旧分数或�
   const { get } = await serve(t, f); const row = (await get('/api/pool')).items[0];
   assert.deepEqual(row.rpsScores, emptyScores()); assert.equal(row.displayRps, null);
   assert.equal(row.scoreSource, null); assert.equal(row.calculationPending, true); assert.deepEqual(row.tags, []);
-  assert.deepEqual((await get('/api/stats')).dataQuality.calculation.sources, { gmgn: 0, geckoterminal: 1, unbound: 0 });
+  assert.deepEqual((await get('/api/stats')).dataQuality.calculation.sources, { gmgn: 0, geckoterminal: 1, binance: 0, unbound: 0 });
 });
 
 test('GMGN 状态白名单通过本地 WS 推送，Gecko 进度排除 GMGN 和其待采新成员', async t => {
@@ -103,7 +103,7 @@ test('GMGN 状态白名单通过本地 WS 推送，Gecko 进度排除 GMGN 和�
   put.run('gmgn_status', JSON.stringify(status), next);
   const { origin, get } = await serve(t, f);
   const stats = await get('/api/stats');
-  assert.deepEqual(stats.dataQuality.calculation.sources, { gmgn: 1, geckoterminal: 1, unbound: 2 });
+  assert.deepEqual(stats.dataQuality.calculation.sources, { gmgn: 1, geckoterminal: 1, binance: 0, unbound: 2 });
   assert.equal(stats.dataQuality.collection.source, 'geckoterminal');
   assert.equal(stats.dataQuality.collection.memberCount, 2); assert.equal(stats.dataQuality.collection.processed, 1);
   assert.equal(stats.dataQuality.freshPriceCount, 1); assert.equal(stats.dataQuality.gmgn.assetsWithHistory, 1);

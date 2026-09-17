@@ -28,7 +28,7 @@ export function createWebReadModel(db: StoreDatabase, cfg: StrategyConfig) {
   let version = 0;
   let freshnessBoundaries: number[] = [];
   const runtime = createRuntimeStore(db, Date.now, undefined, { payload: key => payloads.get(key), cacheParsed: true });
-  const relevant = db.prepare("SELECT key, payload FROM runtime_state WHERE key IN ('last_round','last_rps_round','collection_round','observation_round','discovery_round','gmgn_status','gmgn_cooldown') OR key LIKE 'rps_fallback:%' ORDER BY key");
+  const relevant = db.prepare("SELECT key, payload FROM runtime_state WHERE key IN ('last_round','last_rps_round','collection_round','observation_round','discovery_round','gmgn_status','gmgn_cooldown','binance_status','binance_cooldown') OR key LIKE 'rps_fallback:%' ORDER BY key");
   const readIdentities = db.prepare(`SELECT id,source,scope,network,ca,pool_address AS poolAddress,currency,
     format_version AS formatVersion,created_at AS createdAt,activated_at AS activatedAt,active FROM market_series ORDER BY id`);
   const changes = db.prepare('SELECT total_changes() AS value');

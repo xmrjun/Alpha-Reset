@@ -19,7 +19,7 @@ export interface DisplayRps extends Omit<RpsDisplaySummary, 'coverage'> {
   scores: RpsScores;
   bounds?: RpsBounds;
 }
-export type ScoringSource = 'gmgn' | 'geckoterminal';
+export type ScoringSource = 'gmgn' | 'geckoterminal' | 'binance';
 export interface PoolViewRow extends PoolRow {
   /** 当前固定 T 的实际评分来源；没有匹配计算时为 null。 */
   scoreSource?: ScoringSource | null;
@@ -98,6 +98,19 @@ export interface StatsResponse {
       removedCount?: number;
     };
     enabledSources?: readonly ScoringSource[];
+    /** Binance Web3 采集器运行状态；字段含义与 gmgn 一致，两路进度不可相加。 */
+    binance?: {
+      enabled: boolean;
+      status: 'running' | 'idle' | 'cooldown' | 'auth_error' | 'disabled' | null;
+      updatedAt: number | null;
+      effectiveRpm: number;
+      requests: number;
+      recentRequests: number;
+      historyRequests: number;
+      assetsWithHistory: number;
+      backfillPending: number;
+      cooldownUntil: number;
+    };
     gmgn?: {
       enabled: boolean;
       status: 'running' | 'idle' | 'cooldown' | 'auth_error' | 'disabled' | null;
@@ -114,7 +127,7 @@ export interface StatsResponse {
       cooldownUntil: number;
     };
     calculation?: { memberCount: number; asOf: number | null; computedAt: number | null;
-      sources?: { gmgn: number; geckoterminal: number; unbound: number } };
+      sources?: { gmgn: number; geckoterminal: number; binance: number; unbound: number } };
 
     collection?: {
       source?: 'geckoterminal';

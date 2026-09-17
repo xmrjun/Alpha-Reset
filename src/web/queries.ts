@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { createWebReadModel, type WebReadContext } from './read-context.js';
 import type { StrategyConfig } from '../config/strategy.js';
 import { resolveGmgnChain } from '../api/gmgn.js';
+import { resolveBinanceChain } from '../api/binance-web3.js';
+import { TOKEN_SOURCES } from '../store/series.js';
 import { INTERVAL_MS } from '../market.js';
 import { latestObservationRound, readRpsDisplay, verifiedCalculationSeries, verifiedDisplaySeries } from './rps-display.js';
 import { isRoundFresh, strategyKey } from '../store/runtime.js';
@@ -34,8 +36,13 @@ export function dataQuality(db: StoreDatabase, cfg: StrategyConfig, now: number,
   // collection_round 保存整池快照；当前已交给 GMGN 的资产不是 Gecko 请求队列。
   const members = (round?.members ?? []).filter((member) => {
     const active = verifiedDisplaySeries(db, member, context);
-    if (active) return active.source !== 'gmgn';
-    const chain = resolveGmgnChain(member.pool.chain ?? member.dex?.chainId ?? '');
+    // Gecko 只统计自己真正承担的成员；把 token 源承担的算进来会让页面谎报扫描耗时。
+    if (active) return !(TOKEN_SOURCES as readonly string[]).includes(active.source);
+    const raw = member.pool.chain ?? member.dex?.chainId ?? '';
+    const binanceChain = resolveBinanceChain(raw);
+    if (cfg.kline.binance?.enabled && binanceChain
+      && cfg.kline.binance.chains.some((name) => resolveBinanceChain(name) === binanceChain)) return false;
+    const chain = resolveGmgnChain(raw);
     return !(cfg.kline.gmgn.enabled && chain && cfg.kline.gmgn.chains.includes(chain));
   });
 
@@ -52,10 +59,10 @@ export function dataQuality(db: StoreDatabase, cfg: StrategyConfig, now: number,
   const failed = members.filter((member) => member.klineStatus === 'error').length;
   const display = readRpsDisplay(db, cfg, now, context);
 
-  const sources = { gmgn: 0, geckoterminal: 0, unbound: 0 };
+  const sources = { gmgn: 0, geckoterminal: 0, binance: 0, unbound: 0 };
   for (const member of calculation?.members ?? []) {
     const identity = verifiedCalculationSeries(db, member, context);
-    if (identity?.source === 'gmgn' || identity?.source === 'geckoterminal') sources[identity.source]++;
+    if (identity?.source === 'gmgn' || identity?.source === 'geckoterminal' || identity?.source === 'binance') sources[identity.source]++;
     else sources.unbound++;
   }
   let gmgnStatus: z.infer<typeof gmgnStatusSchema> | null = null;
@@ -65,6 +72,20 @@ export function dataQuality(db: StoreDatabase, cfg: StrategyConfig, now: number,
     if (parsed.success) gmgnStatus = parsed.data;
   } catch { /* 状态缺失/损坏时等待采集器发布，不能回显原 payload。 */ }
   const gmgnEnabled = cfg.kline.gmgn?.enabled ?? false;
+  const binanceEnabled = cfg.kline.binance?.enabled ?? false;
+  let binanceStatus: z.infer<typeof gmgnStatusSchema> | null = null;
+  try {
+    const row = db.prepare("SELECT payload FROM runtime_state WHERE key = 'binance_status'").get() as { payload: string } | undefined;
+    const parsed = gmgnStatusSchema.safeParse(row ? JSON.parse(row.payload) : null);
+    if (parsed.success) binanceStatus = parsed.data;
+  } catch { /* 状态缺失或损坏时等待采集器发布，绝不回显原 payload。 */ }
+  const binance = { enabled: binanceEnabled,
+    status: binanceEnabled ? binanceStatus?.status ?? null : 'disabled' as const,
+    updatedAt: binanceStatus?.updatedAt ?? null, effectiveRpm: cfg.kline.binance?.requestsPerMinute ?? 0,
+    requests: binanceStatus?.requests ?? 0, recentRequests: binanceStatus?.recentRequests ?? 0,
+    historyRequests: binanceStatus?.historyRequests ?? 0, assetsWithHistory: binanceStatus?.assetsWithHistory ?? 0,
+    backfillPending: binanceStatus?.backfillPending ?? 0, cooldownUntil: binanceStatus?.cooldownUntil ?? 0 };
+
   const gmgn = { enabled: gmgnEnabled,
     status: gmgnEnabled ? gmgnStatus?.status ?? null : 'disabled' as const,
     updatedAt: gmgnStatus?.updatedAt ?? null, effectiveRpm: cfg.kline.gmgn?.requestsPerMinute ?? 0,
@@ -86,7 +107,11 @@ export function dataQuality(db: StoreDatabase, cfg: StrategyConfig, now: number,
     ? Object.entries(coverage).filter(([, item]) => (item.boundedPassCount ?? 0) > 0).map(([key]) => key) : [];
 
   return {
-    enabledSources: gmgnEnabled ? ['geckoterminal', 'gmgn'] as const : ['geckoterminal'] as const,
+    // 清单按承担份额排序；漏掉正在供数的来源会让页脚谎报数据出处。
+    enabledSources: ['geckoterminal' as const,
+      ...(binanceEnabled ? ['binance' as const] : []),
+      ...(gmgnEnabled ? ['gmgn' as const] : [])],
+    binance,
     gmgn,
     mayBeTruncated,
     freshPriceCount,

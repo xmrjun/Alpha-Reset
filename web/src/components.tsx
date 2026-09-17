@@ -62,7 +62,8 @@ export function RpsCell({ row }: { row: PoolViewRow }) {
   const hasCurrent = Object.values(row.rpsScores).some((score) => score !== null)
     || Object.values(row.rpsBounds ?? {}).some((bound) => bound !== null);
   return <div className="rps-cell" data-rps-state={display?.state ?? 'waiting'}>
-    {source && <small className="rps-source">{source === 'gmgn' ? t.rpsSourceGmgn : t.rpsSourceGecko}</small>}
+    {source && <small className="rps-source">{source === 'gmgn' ? t.rpsSourceGmgn
+      : source === 'binance' ? t.rpsSourceBinance : t.rpsSourceGecko}</small>}
     <RpsBars scores={display ? display.scores : row.rpsScores}
       bounds={display ? display.bounds : row.rpsBounds} state={display?.state} />
     {display ? <small className={'rps-stamp rps-stamp-' + display.state}
