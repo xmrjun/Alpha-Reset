@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { canonicalCa } from '../addresses.js';
@@ -15,6 +15,7 @@ import { readRoundInputs } from '../store/snapshot.js';
 import { createUsageStore } from '../store/usage.js';
 import type { AlertTag } from '../types.js';
 import { dataQuality, queryAlertGroups, queryOutcomes } from './queries.js';
+import { AGENT_TOOLS, AgentToolError, parseToolArgs } from './agent-tools.js';
 import { latestObservationRound, readRpsDisplay, verifiedDisplaySeries, verifiedCalculationSeries } from './rps-display.js';
 import { createWebReadModel, type WebReadContext } from './read-context.js';
 import { attachLiveFeed } from './live.js';
@@ -22,6 +23,10 @@ import type { DetailResponse, PoolResponse, StatsResponse } from './contracts.js
 
 const limitSchema = z.coerce.number().int().min(1).max(1000).default(200);
 const sorts = ['lastAlertAt', 'symbol', 'ca', 'chain', 'marketCap', 'liquidity', 'volume24h', 'groupName', ...RPS_KEYS];
+/** 用户自带 key 调用的上游网关；本服务只转发，不持有任何推理凭据。 */
+const ORBIO_BASE = process.env.ORBIO_BASE_URL ?? 'https://api.orbio.so/api/v1';
+const chatSchema = z.looseObject({ key: z.string().min(8).max(512) });
+const toolSchema = z.strictObject({ name: z.string().min(1).max(64), arguments: z.unknown().optional() });
 const sortSchema = z.string().default('-lastAlertAt').refine((value) => sorts.includes(value.replace(/^-/, '')));
 
 export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; now?: () => number; quotaTimezone?: string; liveIntervalMs?: number }) {
@@ -103,17 +108,93 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
     const body: PoolResponse = { total: items.length, items: items.slice(0, query.limit), updatedAt };
     return body;
   }
+  /** Agent 内核：把既有只读查询包成工具。不写库、不触发采集，agent 出错也影响不到告警管线。 */
+  function runAgentTool(name: string, args: Record<string, unknown>, now: number): unknown {
+    if (name === 'query_pool') {
+      const { limit, ...rest } = args as { limit: number; chain?: string; group?: string; hit?: '0' | '1' };
+      return db.transaction(() => poolAt(now, { ...rest, sort: '-lastAlertAt', limit }))();
+    }
+    if (name === 'query_alerts') {
+      return queryAlertGroups(db, args as Parameters<typeof queryAlertGroups>[1]);
+    }
+    if (name === 'query_coverage') {
+      const quality = db.transaction(() => statsAt(now))().dataQuality;
+      // 一并给出门槛值，否则模型无法判断「够不够」，只能干念数字。
+      return { asOf: quality.calculation?.asOf ?? null, minCoverage: cfg.a4_rps.minCoverage,
+        inactiveAfterBars: cfg.a4_rps.inactiveAfterBars, coverage: quality.rpsCoverage };
+    }
+    if (name === 'diagnose') {
+      const stats = db.transaction(() => statsAt(now))();
+      const quality = stats.dataQuality;
+      return { poolSize: stats.poolSize, alertsToday: stats.alertsToday, lastRunAt: stats.lastRunAt,
+        quota: stats.quota, enabledSources: quality.enabledSources, sources: quality.calculation?.sources,
+        collection: quality.collection, observation: quality.observation,
+        binance: quality.binance, gmgn: quality.gmgn };
+    }
+    throw new AgentToolError('UNKNOWN_TOOL', '未知工具');
+  }
+  async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of request) {
+      size += (chunk as Buffer).length;
+      // 对话历史可以很长，但不能无上限，否则一个请求就能把内存吃光。
+      if (size > 2_000_000) throw new AgentToolError('INVALID_ARGS', '请求体过大');
+      chunks.push(chunk as Buffer);
+    }
+    if (!chunks.length) return {};
+    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+    catch { throw new AgentToolError('INVALID_ARGS', '请求体不是有效 JSON'); }
+  }
   const server = createServer((request, response) => {
     const send = (status: number, body: unknown) => {
       response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
       response.end(JSON.stringify(body));
     };
+    const agentPath = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    if (request.method === 'POST' && (agentPath === '/api/agent/tool' || agentPath === '/api/agent/chat')) {
+      void (async () => {
+        try {
+          const body = await readJsonBody(request);
+          if (agentPath === '/api/agent/tool') {
+            const call = toolSchema.parse(body);
+            const args = parseToolArgs(call.name, call.arguments);
+            send(200, { result: db.transaction(() => runAgentTool(call.name, args, clock()))() });
+            return;
+          }
+          // 哑代理：除了取出 key 放进 Authorization，请求体原样转发，响应原样回传。
+          // 我们不解析对话内容、不存储、不记录 key —— 用户可以对着这段代码自行核验。
+          const parsed = chatSchema.safeParse(body);
+          if (!parsed.success) { send(400, { error: 'MISSING_KEY' }); return; }
+          const { key, ...payload } = parsed.data as Record<string, unknown> & { key: string };
+          const upstream = await fetch(ORBIO_BASE + '/chat/completions', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(90_000),
+          });
+          const text = await upstream.text();
+          response.writeHead(upstream.status, { 'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+          response.end(text);
+        } catch (error) {
+          if (error instanceof AgentToolError) { send(400, { error: error.code }); return; }
+          if (error instanceof z.ZodError) { send(400, { error: 'INVALID_ARGS' }); return; }
+          // 上游异常只回固定错误码，绝不回显可能夹带 key 的原始错误。
+          send(502, { error: 'UPSTREAM_FAILED' });
+        }
+      })();
+      return;
+    }
     if (request.method !== 'GET') { response.setHeader('Allow', 'GET'); send(405, { error: 'METHOD_NOT_ALLOWED' }); return; }
     try {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1');
       const raw = Object.fromEntries(url.searchParams);
       const now = clock();
+      if (url.pathname === '/api/agent/tools') {
+        send(200, { tools: AGENT_TOOLS }); return;
+      }
       if (url.pathname === '/api/stats') {
         send(200, db.transaction(() => statsAt(now))()); return;
       }
