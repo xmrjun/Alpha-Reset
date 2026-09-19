@@ -168,6 +168,23 @@ Three things in those templates are load-bearing, and skipping them breaks the a
 
 The two credential files are separate on purpose. `alpha-web` is the only process exposed to public requests, and it needs nothing but `XAPI_KEY` — so it must not be handed the Telegram bot token that can post to your alert channel. Pointing systemd at `.env.web` is not enough by itself: `loadConfig()` calls `loadEnvFile()` on its own, so the unit also sets `ENV_FILE`.
 
+## What you actually get if you deploy this yourself
+
+Worth stating plainly, because the repository runs but the system does not come with data:
+
+| | Works out of the box | What it needs |
+|---|---|---|
+| **Agent chat** | ✅ | Nothing from you — each visitor brings their own Orbio key, and the server holds no inference credentials |
+| **`social_check`** | ✅ | Your own `XAPI_KEY` (free to register). ~$0.0001 per query |
+| **Market collection** | ✅ | `XAPI_KEY` for Binance Web3; GeckoTerminal needs no key |
+| **Watchlist and alerts** | ❌ | An `ERWA_API_TOKEN` and access to the three private groups this system reads |
+
+The rules, the indicators, the ranking, the exclusion logic and the agent layer are all here and all tested. What is not here — and cannot be — is the group access that fills the watchlist. Without it `ERWA_API_TOKEN` takes the placeholder value, group discovery returns nothing, and the pool stays empty: the scheduler runs, the pages render, and there is nothing in them.
+
+So: deploy it to read the code, to reuse the agent layer, or to point the collectors at your own source. Do not expect alerts to appear on their own.
+
+Set `DRY_RUN=1` to exercise the whole pipeline against real upstreams without delivering anything to Telegram.
+
 ## Configuration
 
 Strategy thresholds live in [`config/strategy.json`](config/strategy.json), validated by `loadStrategy()`, which recursively ignores `$comment`-prefixed keys. `config/strategy.local.json` overrides it and is git-ignored — the repository copy carries placeholder group names.

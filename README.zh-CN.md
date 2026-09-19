@@ -166,6 +166,23 @@ npm run dry-run     # 真实读取上游，但不发送 Telegram
 
 两个凭据文件是故意分开的。`alpha-web` 是唯一直接暴露在公网请求面前的进程，而它只需要 `XAPI_KEY` —— 不该把能往你告警群发消息的 Telegram bot token 一并交给它。只把 systemd 指向 `.env.web` 还不够：`loadConfig()` 自己会调 `loadEnvFile()`，所以 unit 里还要设 `ENV_FILE`。
 
+## 自己部署能得到什么
+
+说清楚比较好 —— 仓库能跑起来，但系统不自带数据：
+
+| | 开箱可用 | 需要什么 |
+|---|---|---|
+| **agent 聊天** | ✅ | 什么都不用你出 —— 访客自带 Orbio key，服务端不持有任何推理凭据 |
+| **`social_check`** | ✅ | 你自己的 `XAPI_KEY`（免费注册），每次查询约 $0.0001 |
+| **行情采集** | ✅ | Binance Web3 走 `XAPI_KEY`；GeckoTerminal 不需要 key |
+| **观察池与告警** | ❌ | 需要 `ERWA_API_TOKEN`，以及本系统读取的那三个私域群的访问权 |
+
+规则、指标、排名、剔除逻辑和 agent 层全都在仓库里，也全都有测试。唯一不在、也不可能在的，是填充观察池的那份群访问权。没有它，`ERWA_API_TOKEN` 只能填占位值，群发现拿不到任何东西，池子是空的：调度器照常运行、页面照常渲染，里面什么都没有。
+
+所以：部署它是为了读代码、复用 agent 层，或者把采集器接到你自己的数据源上。不要指望告警会自己冒出来。
+
+把 `DRY_RUN=1` 打开，可以对真实上游跑通整条管线而不向 Telegram 推送任何东西。
+
 ## 配置
 
 策略阈值集中在 [`config/strategy.json`](config/strategy.json)，由 `loadStrategy()` 校验，递归忽略 `$comment` 前缀键。`config/strategy.local.json` 会覆盖它且已 gitignore——仓库内的副本使用占位群名。
