@@ -5,7 +5,11 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/root/Alpha-Reset
-EnvironmentFile=/root/Alpha-Reset/.env
+# web 只需要 XAPI_KEY，不该持有 Telegram bot token / GMGN key / 二娃 token ——
+# 它是唯一直接暴露在公网请求面前的进程。两行都要写：EnvironmentFile 管 systemd 注入，
+# ENV_FILE 管进程自己的 loadEnvFile()，只改前者的话 .env 照样会被整个读进来。
+EnvironmentFile=/root/Alpha-Reset/.env.web
+Environment=ENV_FILE=/root/Alpha-Reset/.env.web
 ExecStart=/root/.nvm/versions/node/v24.21.0/bin/node /root/Alpha-Reset/dist/src/web/server.js
 Restart=on-failure
 RestartSec=5

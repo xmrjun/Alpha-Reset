@@ -148,14 +148,23 @@ npm ci
 npm test            # 387 个后端测试；mock 上游、临时 SQLite，不联网、不读真实 Token
 npm run test:web    # 18 个浏览器测试（需先 npx playwright install --with-deps chromium）
 
-cp .env.example .env && chmod 600 .env   # 填入凭据
+cp .env.example .env && chmod 600 .env              # 采集/告警进程的凭据
+cp .env.web.example .env.web && chmod 600 .env.web  # web 进程：只要 XAPI_KEY
 npm run web         # JSON API：127.0.0.1:8787
 npm run dev:web     # 前端：127.0.0.1:5173，/api 自动代理
 npm start           # 调度器
 npm run dry-run     # 真实读取上游，但不发送 Telegram
 ```
 
-两个服务都只绑定回环地址。`deploy/` 提供 nginx 与 systemd 模板。
+两个服务都只监听回环地址。`deploy/` 是 nginx 与 systemd 模板，与线上实际运行的配置保持同步。
+
+模板里有三处不能省，省掉不是「安全性弱一点」而是 agent 直接不能用：
+
+- `location /api/agent/` 需要 `proxy_read_timeout 120s` 与 `proxy_buffering off`。一轮工具调用要 30~60 秒，默认的 60 秒超时会把回答从中间切断。
+- 安全响应头必须写在 `location /` **里面**。nginx 的 `add_header` 不继承：子 location 一旦声明了自己的 add_header，父级那几条全部失效。写在 `server` 级的话 `curl -I` 一个都看不到。
+- `limit_req_zone` 必须写在 `server` 块之前的 http 上下文里。
+
+两个凭据文件是故意分开的。`alpha-web` 是唯一直接暴露在公网请求面前的进程，而它只需要 `XAPI_KEY` —— 不该把能往你告警群发消息的 Telegram bot token 一并交给它。只把 systemd 指向 `.env.web` 还不够：`loadConfig()` 自己会调 `loadEnvFile()`，所以 unit 里还要设 `ENV_FILE`。
 
 ## 配置
 

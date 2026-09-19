@@ -150,14 +150,23 @@ npm ci
 npm test            # 387 backend tests; mock upstreams, temp SQLite, no network, no real token
 npm run test:web    # 18 browser tests (needs: npx playwright install --with-deps chromium)
 
-cp .env.example .env && chmod 600 .env   # fill in credentials
+cp .env.example .env && chmod 600 .env            # the scheduler's credentials
+cp .env.web.example .env.web && chmod 600 .env.web  # the web process: XAPI_KEY only
 npm run web         # JSON API on 127.0.0.1:8787
 npm run dev:web     # UI on 127.0.0.1:5173, proxies /api
 npm start           # the scheduler
 npm run dry-run     # real upstream reads, no Telegram delivery
 ```
 
-Both services bind to loopback only. `deploy/` holds nginx and systemd templates.
+Both services bind to loopback only. `deploy/` holds the nginx and systemd templates, kept in sync with what actually runs in production.
+
+Three things in those templates are load-bearing, and skipping them breaks the agent rather than merely weakening it:
+
+- `location /api/agent/` needs `proxy_read_timeout 120s` and `proxy_buffering off`. One round of tool calls takes 30–60 s; the 60 s default cuts the chat off mid-answer.
+- The security headers must sit **inside** `location /`. nginx's `add_header` does not inherit: the moment a child location declares one of its own, every header from the parent is dropped. Put them at `server` level and `curl -I` shows none of them.
+- `limit_req_zone` must be declared before the `server` block, in the `http` context.
+
+The two credential files are separate on purpose. `alpha-web` is the only process exposed to public requests, and it needs nothing but `XAPI_KEY` — so it must not be handed the Telegram bot token that can post to your alert channel. Pointing systemd at `.env.web` is not enough by itself: `loadConfig()` calls `loadEnvFile()` on its own, so the unit also sets `ENV_FILE`.
 
 ## Configuration
 
