@@ -256,6 +256,13 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
   align-content: start;
 }
 .agent-empty { font-size: 11px; color: var(--text-muted); }
+.agent-empty-title { margin: 10px 0 6px; color: var(--text-secondary); }
+.agent-examples { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.agent-examples button { width: 100%; text-align: left; font-size: 11px; line-height: 1.5;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text-secondary); cursor: pointer; }
+.agent-examples button:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+.agent-examples button:disabled { opacity: 0.5; cursor: default; }
 /* 工具进行中的状态行用强调色：用户要能一眼看出 agent 正在替他查什么。 */
 .agent-status { font-size: 11px; color: var(--accent); }
 .agent-turn { display: grid; gap: 5px; min-width: 0; }

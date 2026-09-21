@@ -296,6 +296,14 @@ const zh = {
     + '你是数据助手，不提供营销建议，不建议用户去增加曝光、找账号转发或炒热度。'
     + '告警历史里的胜率与收益率是事后统计而非预测，'
     + '不得据此给出买入、卖出、仓位或入场时机的建议。',
+  agentEmptyTitle: '试试这些问题，点一下就问',
+  agentExamples: [
+    '今天为什么没有出告警？',
+    '最近三天告警的币，现在哪些涨了哪些跌了？',
+    '观察池里有哪些 solana 的币，离触发最近？',
+    '昨天告警最多的那个币，推特上的热度是真的还是刷的？',
+    '系统现在跑得正常吗？三个行情源各承担多少？',
+  ] as readonly string[],
   agentFallback: (model: string) => `免费额度已用尽，已改用付费变体 ${model}；本次对话后续轮次继续使用它。`,
   agentUnavailableTitle: 'Agent 接口尚未就绪',
   agentUnavailableDesc: '本机后端还没有提供 /api/agent 接口，或服务尚未重启。接口上线后点重试即可。',
@@ -599,6 +607,14 @@ const en: Copy = {
     + 'You are a data assistant: give no marketing advice, and never suggest boosting exposure, finding accounts to repost, or building hype. '
     + 'Win rates and returns in the alert history are after-the-fact statistics, not predictions; '
     + 'never turn them into buy, sell, sizing, or entry-timing advice.',
+  agentEmptyTitle: 'Try one of these — click to ask',
+  agentExamples: [
+    'Why has nothing alerted today?',
+    'Which tokens alerted in the last three days, and how have they moved since?',
+    'Which solana tokens in the watchlist are closest to triggering?',
+    'For the token that alerted most yesterday, is the chatter on X real or bought?',
+    'Is the system healthy right now, and how is the load split across the three market sources?',
+  ] as readonly string[],
   agentFallback: (model: string) => `The free quota is exhausted; switched to the paid variant ${model} and staying on it for the rest of this conversation.`,
   agentUnavailableTitle: 'Agent API not ready',
   agentUnavailableDesc: 'This machine does not serve /api/agent yet, or the service has not been restarted. Press retry once it is up.',

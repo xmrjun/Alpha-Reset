@@ -123,8 +123,8 @@ export function AgentPanel({ standalone = false }: { standalone?: boolean } = {}
 
   const toolLabel = (name: string): string => t.agentTools[name] ?? name;
 
-  async function send(): Promise<void> {
-    const text = input.trim();
+  async function send(override?: string): Promise<void> {
+    const text = (override ?? input).trim();
     if (!text || running) return;
     if (!savedKey) { setError(t.agentErrMissingKey); return; }
     const next: ChatMessage[] = [...messages, { role: 'user', content: text }];
@@ -139,7 +139,9 @@ export function AgentPanel({ standalone = false }: { standalone?: boolean } = {}
       await runAgent({
         key: savedKey, model, tools: tools ?? [],
         // system 每次现拼：用户中途切语言后，下一句就该用新语言回答。
-        messages: [{ role: 'system', content: t.agentSystemPrompt }, ...next],
+        // 带上当前时间：不给的话模型不知道「今天」是哪天，
+        // 问「9 月 20 号告警的币」时算不出时间戳，只能瞎猜或者放弃。
+        messages: [{ role: 'system', content: `${t.agentSystemPrompt}\n当前时间 / Current time: ${new Date().toISOString()}` }, ...next],
         signal: controller.signal,
         onMessages: (all) => setMessages(all.filter((message) => message.role !== 'system')),
         onStatus: setStatus,
@@ -241,7 +243,18 @@ export function AgentPanel({ standalone = false }: { standalone?: boolean } = {}
         <div><p>{t.agentFallback(fallbackModel)}</p></div></div>}
 
       <div className="agent-log" role="log" aria-live="polite" aria-label={t.agentTitle}>
-        {!messages.length && <p className="agent-empty">{t.agentEmpty}</p>}
+        {!messages.length && <div className="agent-empty">
+          <p>{t.agentEmpty}</p>
+          <p className="agent-empty-title">{t.agentEmptyTitle}</p>
+          <ul className="agent-examples">
+            {t.agentExamples.map((example) => <li key={example}>
+              <button type="button" disabled={running || unavailable} onClick={() => {
+                // 有 key 就直接问；没有的话 send 会提示先填 key，同时把问题留在输入框里。
+                if (savedKey) void send(example); else { setInput(example); setError(t.agentErrMissingKey); }
+              }}>{example}</button>
+            </li>)}
+          </ul>
+        </div>}
         {messages.map((message, index) => {
           if (message.role === 'tool') return null;
           if (message.role === 'user') {
