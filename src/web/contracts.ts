@@ -4,7 +4,7 @@ import type { MarketSeries } from '../store/series.js';
 import type { RpsCoverage } from '../store/runtime.js';
 import type { RuleOutput } from '../rules/evaluate.js';
 import type { PoolRow } from '../store/pool.js';
-import type { AlertTag, BreakoutMoment, Candle } from '../types.js';
+import type { AlertTag, BreakoutMoment, Candle , DexSnapshot } from '../types.js';
 
 export interface RpsDisplaySummary {
   state: 'current' | 'previous' | 'stale';
@@ -40,6 +40,8 @@ export interface AlertGroup {
 }
 export interface IndicatorPoint { openTime: number; value: number }
 export interface DetailResponse {
+  /** DexScreener 的交易对快照：pairAddress 与它自己的 chainId 才能拼出直达链接。 */
+  dex: DexSnapshot | null;
   pool: PoolRow;
   marketSeries?: MarketSeries | null;
   historyStartedAt?: number | null;

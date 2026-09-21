@@ -232,7 +232,7 @@ function Detail({ ca, theme }: { ca: string; theme: string }) {
       <div className="external-links">
         {data?.marketSeries?.source === 'geckoterminal' && <a href={'https://www.geckoterminal.com/' + encodeURIComponent(data.marketSeries.network)
           + '/pools/' + encodeURIComponent(data.marketSeries.poolAddress)} target="_blank" rel="noreferrer">{t.linkPair}</a>}
-        <a href={dexScreenerUrl(ca, chain)} target="_blank" rel="noreferrer">DexScreener ↗</a>
+        <a href={dexScreenerUrl(ca, data?.dex?.chainId ?? chain, data?.dex?.pairAddress)} target="_blank" rel="noreferrer">DexScreener ↗</a>
         {/* 此前直接把 chain 拼进 URL，但 GMGN 用 sol/eth 而非 solana/ethereum，
             导致 solana 与 ethereum 的链接全是坏的 —— 现由 links.ts 统一映射 */}
         {gmgnUrl(ca, chain) && <a href={gmgnUrl(ca, chain)!} target="_blank" rel="noreferrer">GMGN ↗</a>}</div></section>

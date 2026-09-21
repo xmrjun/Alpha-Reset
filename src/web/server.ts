@@ -409,6 +409,9 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
         const start = displayed[0]?.openTime ?? Infinity;
         const body: DetailResponse = { pool, candles: displayed, moments: input.moments,
           marketSeries: identity, historyStartedAt: all[0]?.openTime ?? null,
+          // 本地快照，不发请求。外链要用 DexScreener 自己的 pairAddress 与 chainId —— 
+          // 我们的 chain 命名和它的未必一致，而 token 地址拼出来的链接不是交易对页。
+          dex: member.dex ?? null,
           indicators: {
             rsi: rsi(recent, cfg.indicators.rsiPeriod).map((value, i) => ({ openTime: recent[i + cfg.indicators.rsiPeriod]!.openTime, value }))
               .filter((point) => point.openTime >= start),

@@ -186,9 +186,19 @@ export function queryAlertGroups(db: StoreDatabase, filter: AlertFilter = {}): A
 function slimPayload(raw: string): unknown {
   try {
     const full = JSON.parse(raw) as Record<string, unknown>;
-    return { reasons: full.reasons, marketCap: full.marketCap, listedAt: full.listedAt,
+    // 这两块只取拼外链要用的几个键：整份 marketSeries 与 dex 合计占体积的 17%，
+    // 而卡片只需要 source/network/poolAddress 和 chainId/pairAddress。
+    const series = full.marketSeries as Record<string, unknown> | null | undefined;
+    const dex = full.dex as Record<string, unknown> | null | undefined;
+    return {
+      reasons: full.reasons, marketCap: full.marketCap, listedAt: full.listedAt,
       listingSource: full.listingSource, strategyVersion: full.strategyVersion,
-      rpsScores: full.rpsScores, rpsBaseline: full.rpsBaseline };
+      rpsScores: full.rpsScores, rpsBaseline: full.rpsBaseline,
+      marketSeries: series
+        ? { source: series.source, network: series.network, poolAddress: series.poolAddress }
+        : null,
+      dex: dex ? { chainId: dex.chainId, pairAddress: dex.pairAddress } : null,
+    };
   } catch {
     return null;
   }
