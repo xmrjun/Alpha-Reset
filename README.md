@@ -6,6 +6,10 @@ A production monitoring system that watches tokens discussed in private trading 
 
 **Live:** <https://alpha.nbmrjun.top> · no login, read-only, served from local data.
 
+![Asking the agent which tokens alerted in the last three days and how they have moved since](docs/media/demo.gif)
+
+*One question, two tool calls, real numbers out of the local database — 21 seconds end to end. The key is the visitor's own; this machine forwards it and stores nothing.*
+
 ---
 
 ## Orbio Build Week
@@ -23,6 +27,8 @@ grep -rn "OPENROUTER_API_KEY\|ORBIO_KEY" src/web/   # must print nothing
 ```
 
 The key travels in the request **body**, never in a URL, because nginx writes URLs to its access log. It lives in the browser's `localStorage` and nowhere else — as does the conversation, since navigation is plain `<a>` links and every tab switch is a full page load.
+
+![The agent answering a question about post-alert price movement](docs/media/agent-answer.png)
 
 Each tool declares a JSON Schema with `additionalProperties: false` and passes a zod gate before reaching the query layer, so a hallucinated parameter is rejected in front of the database rather than inside it.
 

@@ -255,6 +255,14 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
   gap: 12px;
   align-content: start;
 }
+.agent-table-wrap { overflow-x: auto; margin: 6px 0; }
+.agent-md-table { border-collapse: collapse; font-size: 10.5px; white-space: nowrap; }
+.agent-md-table th, .agent-md-table td { padding: 4px 9px; border: 1px solid var(--border); text-align: left; }
+.agent-md-table th { color: var(--text-secondary); font-weight: 600; background: var(--surface); }
+.agent-md-table td code { border: 0; background: transparent; padding: 0; }
+.agent-text strong { color: var(--text-primary); font-weight: 600; }
+.agent-text code { padding: 1px 4px; border-radius: 3px; background: var(--surface);
+  border: 1px solid var(--border); font-size: 0.95em; overflow-wrap: anywhere; }
 .agent-empty { font-size: 11px; color: var(--text-muted); }
 .agent-empty-title { margin: 10px 0 6px; color: var(--text-secondary); }
 .agent-examples { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }

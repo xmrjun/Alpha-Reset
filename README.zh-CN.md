@@ -6,6 +6,10 @@
 
 **线上：** <https://alpha.nbmrjun.top> · 无需登录，只读，全部数据来自本地。
 
+![向 agent 提问最近三天告警的币涨跌如何](docs/media/demo.gif)
+
+*一句提问、两次工具调用、从本地库里出真实数字，端到端 21 秒。用的是访客自己的 key，本机只转发不存储。*
+
 ---
 
 ## 关于 Orbio Build Week
@@ -23,6 +27,8 @@ grep -rn "OPENROUTER_API_KEY\|ORBIO_KEY" src/web/   # 必须无输出
 ```
 
 key 走请求**体**而不是 URL，因为 nginx 会把 URL 写进访问日志。它只存在于浏览器的 `localStorage` 里——对话记录也是，因为导航是普通 `<a>` 链接，每次切标签都是整页重载。
+
+![agent 正在回答告警后涨跌的问题](docs/media/agent-answer.png)
 
 每个工具都声明 `additionalProperties: false` 的 JSON Schema，并在进入查询层之前过一道 zod，模型幻觉出来的参数在数据库门口就被拦下，而不是打进去之后。
 

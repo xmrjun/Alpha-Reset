@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AGENT_MODELS, AgentError, DEFAULT_MODEL, MAX_ROUNDS, MODEL_CONTEXT, loadAgentTools, runAgent,
   type AgentStatus, type AgentTool, type ChatMessage,
@@ -39,6 +39,54 @@ function prettyJson(text: string): string {
  * 折中：整个气泡用等宽字体加 pre-wrap，再把连续的 `|` 开头行单独拎成一块用 white-space:pre
  * 渲染并允许横向滚动 —— 表格一旦被折行就彻底看不出列，而正文若也用 pre 又会撑破窄屏面板。
  */
+/**
+ * 只认粗体与行内代码这两种。模型几乎必用（实测回答里满屏 `**Alert Price:**`，
+ * 不处理就是一堆星号），但为它引入 markdown 依赖不值得 —— 那类库通常要走
+ * innerHTML，等于给模型输出开一条注入通道。这里用正则切成 React 元素，
+ * 文本始终是文本节点，没有任何注入面。
+ */
+function renderInline(text: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  const pattern = /\*\*([^*\n]+)\*\*|`([^`\n]+)`/g;
+  let last = 0;
+  let match = pattern.exec(text);
+  while (match !== null) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push(match[1] !== undefined
+      ? <strong key={match.index}>{match[1]}</strong>
+      : <code key={match.index}>{match[2]}</code>);
+    last = pattern.lastIndex;
+    match = pattern.exec(text);
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+/**
+ * markdown 表格渲染成真表格。
+ *
+ * 之前是整块塞进 <pre>：列靠空格对齐，模型一旦不对齐就全乱，单元格里的 `**` 也
+ * 原样露在外面。改成 <table> 之后列宽自适应，单元格内容还能走 renderInline。
+ * 解析失败就回退到原样文本 —— 宁可难看也不要把内容吃掉。
+ */
+function renderTable(lines: string[], key: number, raw: string) {
+  const rows = lines.map((line) => line.trim()).filter((line) => line.startsWith('|'))
+    .map((line) => line.replace(/^\||\|$/g, '').split('|').map((cell) => cell.trim()));
+  const separator = (cells: string[]): boolean => cells.every((cell) => /^:?-{2,}:?$/.test(cell));
+  const header = rows[0];
+  if (!header || rows.length < 2 || !separator(rows[1]!)) {
+    return <div className="agent-table" key={key}>{raw}</div>;
+  }
+  return <div className="agent-table-wrap" key={key}>
+    <table className="agent-md-table">
+      <thead><tr>{header.map((cell, i) => <th key={i}>{renderInline(cell)}</th>)}</tr></thead>
+      <tbody>{rows.slice(2).map((row, ri) => <tr key={ri}>
+        {row.map((cell, ci) => <td key={ci}>{renderInline(cell)}</td>)}
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
 function renderContent(text: string) {
   const blocks: { table: boolean; lines: string[] }[] = [];
   for (const line of text.split('\n')) {
@@ -49,9 +97,9 @@ function renderContent(text: string) {
   }
   return blocks.map((block, index) => {
     const body = block.lines.join('\n');
-    if (block.table) return <div className="agent-table" key={index}>{body}</div>;
+    if (block.table) return renderTable(block.lines, index, body);
     // 表格前后常有空行，原样渲染会多出两个空段落。
-    return body.trim() ? <p className="agent-text" key={index}>{body.trim()}</p> : null;
+    return body.trim() ? <p className="agent-text" key={index}>{renderInline(body.trim())}</p> : null;
   });
 }
 
