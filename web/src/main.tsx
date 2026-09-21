@@ -1,4 +1,4 @@
-import { StrictMode, useLayoutEffect, useMemo, useState } from 'react';
+import { StrictMode, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AlertsResponse, DetailResponse, OutcomesResponse, PoolResponse, PoolViewRow, StatsResponse } from '../../src/web/contracts.js';
 import { PERIODS, RPS_KEYS, TAG_DETAILS, type Period } from '../../src/market.js';
@@ -318,6 +318,41 @@ function SocialBoard() {
   </>;
 }
 
+/**
+ * 站内导航走 pushState，不再整页重载。
+ *
+ * 原先导航栏是普通 <a>，每点一次就要重新请求 HTML、重新挂载 React、把所有接口
+ * 再走一遍 —— 实测切一次标签 400~665ms，其中 JS 只占 20~30ms，其余全在等接口，
+ * 而 /api/stats 每页内容都一样却每次都重新请求。
+ *
+ * 用一个全局点击拦截而不是自定义 Link 组件：站内链接散落在表格、面包屑、品牌区
+ * 各处，逐个替换容易漏，漏掉的那个就会悄悄退回整页重载。
+ * 新标签页、修饰键、右键、外链、target=_blank 一律放行给浏览器原生行为。
+ */
+function useClientRoute(): string {
+  const [path, setPath] = useState(() => window.location.pathname);
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as HTMLElement | null)?.closest?.('a');
+      if (!anchor) return;
+      const href = anchor.getAttribute('href');
+      if (!href || !href.startsWith('/') || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+      event.preventDefault();
+      if (href === window.location.pathname) return;
+      window.history.pushState(null, '', href);
+      setPath(href);
+      window.scrollTo(0, 0);   // 整页重载时浏览器会做这件事，自己接管后要补上
+    };
+    const onPop = () => setPath(window.location.pathname);
+    document.addEventListener('click', onClick);
+    window.addEventListener('popstate', onPop);
+    return () => { document.removeEventListener('click', onClick); window.removeEventListener('popstate', onPop); };
+  }, []);
+  return path;
+}
+
 function App() {
   const [theme, setTheme] = useState(initialTheme);
   const [lang, setLangState] = useState<Lang>(detectLang);
@@ -331,7 +366,7 @@ function App() {
   }, [theme]);
   // lang 属性影响屏幕阅读器发音与断词，必须随语言切换同步更新。
   useLayoutEffect(() => { document.documentElement.lang = t.htmlLang; }, [t.htmlLang]);
-  const path = window.location.pathname;
+  const path = useClientRoute();
   let ca: string | null = null;
   if (path.startsWith('/ca/')) { try { ca = decodeURIComponent(path.slice(4)); } catch { /* 显示未找到 */ } }
   return <LangContext.Provider value={{ lang, t, setLang }}>

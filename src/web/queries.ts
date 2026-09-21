@@ -163,7 +163,7 @@ export function queryAlertGroups(db: StoreDatabase, filter: AlertFilter = {}): A
     let group = map.get(key);
     if (!group) {
       group = { id: row.id, ca: row.ca, chain: row.chain ?? null, symbol: row.symbol ?? null,
-        firedAt: row.firedAt, tags: [], payload: JSON.parse(row.payload) as unknown, pushed: false };
+        firedAt: row.firedAt, tags: [], payload: slimPayload(row.payload), pushed: false };
       map.set(key, group);
       pushedTags.set(key, new Set());
     }
@@ -172,6 +172,26 @@ export function queryAlertGroups(db: StoreDatabase, filter: AlertFilter = {}): A
   }
   for (const [key, group] of map) group.pushed = group.tags.every((tag) => pushedTags.get(key)!.has(tag));
   return { items: [...map.values()], total };
+}
+
+/**
+ * 列表用的精简快照：只留解释「为什么触发」需要的几项。
+ *
+ * 完整 payload 里塞着触发时刻的三档 K 线、五档 RPS 覆盖率明细、序列元信息和 dex 状态，
+ * 200 条加起来 675 KB。前端列表一个字段都不显示，而 agent 的 query_alerts 拿 20 条就
+ * 要吃掉 62 KB 上下文 —— 相当于每次提问先灌十几 K token 的噪声进去。
+ *
+ * 需要完整快照的地方（详情页的指标区）走的是各自的接口，不经过这里。
+ */
+function slimPayload(raw: string): unknown {
+  try {
+    const full = JSON.parse(raw) as Record<string, unknown>;
+    return { reasons: full.reasons, marketCap: full.marketCap, listedAt: full.listedAt,
+      listingSource: full.listingSource, strategyVersion: full.strategyVersion,
+      rpsScores: full.rpsScores, rpsBaseline: full.rpsBaseline };
+  } catch {
+    return null;
+  }
 }
 
 /** 只读聚合；不触发任何计算或上游请求。since 之前的样本不计入。 */
