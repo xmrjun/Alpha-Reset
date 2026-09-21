@@ -14,8 +14,8 @@ import { readRoundInputs } from '../store/snapshot.js';
 import { createUsageStore } from '../store/usage.js';
 import type { AlertTag } from '../types.js';
 import { dataQuality, queryAlertGroups, queryOutcomes } from './queries.js';
-import { AGENT_TOOLS, ALERTS_RESULT_NOTE, AgentToolError, POOL_RESULT_NOTE, SOCIAL_RESULT_NOTE,
-  parseToolArgs } from './agent-tools.js';
+import { AGENT_TOOLS, ALERTS_RESULT_NOTE, AgentToolError, PERFORMANCE_RESULT_NOTE, POOL_RESULT_NOTE,
+  SOCIAL_RESULT_NOTE, parseToolArgs } from './agent-tools.js';
 import { canonicalCa } from '../addresses.js';
 import { XapiError } from '../api/xapi-twitter.js';
 import { XapiTwitterClient } from '../api/xapi-twitter.js';
@@ -54,6 +54,17 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   const clock = opts.now ?? Date.now;
   // 唯一会花钱的工具：没有 XAPI_KEY 就整个不可用，而不是退化成空结果。
   const xapiKey = process.env.XAPI_KEY;
+  // 告警至今的价格变化：两端都从同一个活跃序列取，跨源拼接出来的涨跌幅是假的。
+  const alertsInWindow = db.prepare(`SELECT ca, MIN(fired_at) AS firedAt,
+    GROUP_CONCAT(DISTINCT tag) AS tags FROM alerts WHERE fired_at >= ? AND fired_at < ?
+    GROUP BY ca ORDER BY firedAt DESC LIMIT ?`);
+  const activeSeriesOf = db.prepare('SELECT id, source FROM market_series WHERE ca = ? AND active = 1 LIMIT 1');
+  const barAtOrBefore = db.prepare(`SELECT close, open_time AS openTime FROM series_candles
+    WHERE series_id = ? AND interval = '15m' AND open_time <= ? ORDER BY open_time DESC LIMIT 1`);
+  const newestBar = db.prepare(`SELECT close, open_time AS openTime FROM series_candles
+    WHERE series_id = ? AND interval = '15m' ORDER BY open_time DESC LIMIT 1`);
+  const poolNameOf = db.prepare('SELECT symbol, chain FROM ca_pool WHERE ca = ?');
+
   // social_check 只允许查我们追踪过的币：当前观察池，或群里曾经提到、现已归档的。
   // 掉出池子的币照样值得复盘，但「从没见过的地址」必须挡住 —— 否则这个端点
   // 就是一个用本站凭据付费的公开搜索服务。
@@ -161,6 +172,52 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
     if (name === 'query_alerts') {
       const body = queryAlertGroups(db, args as Parameters<typeof queryAlertGroups>[1]);
       return { ...body, note: ALERTS_RESULT_NOTE };
+    }
+    if (name === 'alert_performance') {
+      const { from, to, limit } = args as { from?: number; to?: number; limit: number };
+      const windowTo = to ?? now;
+      const windowFrom = from ?? windowTo - 7 * 24 * 60 * 60 * 1000;
+      const rows = alertsInWindow.all(windowFrom, windowTo, limit) as
+        { ca: string; firedAt: number; tags: string | null }[];
+
+      const items = rows.map((row) => {
+        const info = poolNameOf.get(row.ca) as { symbol: string | null; chain: string | null } | undefined;
+        const base = { ca: row.ca, symbol: info?.symbol ?? null, chain: info?.chain ?? null,
+          firedAt: row.firedAt, tags: row.tags ? row.tags.split(',') : [] };
+        const blank = { entryPrice: null, currentPrice: null, changePct: null, priceAsOf: null, source: null };
+
+        const series = activeSeriesOf.get(row.ca) as { id: string; source: string } | undefined;
+        if (!series) return { ...base, ...blank, unavailable: 'no_series' };
+        const entry = barAtOrBefore.get(series.id, row.firedAt) as { close: number; openTime: number } | undefined;
+        if (!entry) return { ...base, ...blank, source: series.source, unavailable: 'no_entry_bar' };
+        const latest = newestBar.get(series.id) as { close: number; openTime: number } | undefined;
+        // 最新那根就是告警那根，说明这个币告警之后再没有新行情，不能算成零涨跌。
+        if (!latest || latest.openTime <= entry.openTime) {
+          return { ...base, ...blank, entryPrice: entry.close, source: series.source,
+            priceAsOf: entry.openTime, unavailable: 'no_recent_bar' };
+        }
+        return { ...base, entryPrice: entry.close, currentPrice: latest.close,
+          changePct: ((latest.close - entry.close) / entry.close) * 100,
+          priceAsOf: latest.openTime, source: series.source, unavailable: null };
+      });
+
+      const moved = items.filter((item) => typeof item.changePct === 'number').map((item) => item.changePct!);
+      const sorted = [...moved].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return {
+        window: { from: windowFrom, to: windowTo },
+        note: PERFORMANCE_RESULT_NOTE,
+        summary: {
+          total: items.length,
+          up: moved.filter((value) => value > 0).length,
+          down: moved.filter((value) => value < 0).length,
+          flat: moved.filter((value) => value === 0).length,
+          unavailable: items.filter((item) => item.unavailable !== null).length,
+          medianChangePct: sorted.length === 0 ? null
+            : sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!,
+        },
+        items,
+      };
     }
     if (name === 'query_coverage') {
       const quality = db.transaction(() => statsAt(now))().dataQuality;

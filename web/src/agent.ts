@@ -19,6 +19,7 @@
  * 比少几个选项危险得多。加新模型前请先实测它是否真的发起 tool_calls。
  */
 export const AGENT_MODELS = [
+  // 全部经 Orbio /models 校验确实存在；上游有 600 多个，这里只放能做工具调用的主流款。
   'nvidia/nemotron-3.5-lightning:free',
   'nvidia/nemotron-3-super-120b-a12b:free',
   'dots-studio/dots-3-note-preview:free',
@@ -27,10 +28,23 @@ export const AGENT_MODELS = [
   'nex-agi/nex-n2.5-mini:free',
   'google/gemma-4-31b-it:free',
   'google/gemma-4-26b-a4b-it:free',
+  'anthropic/claude-opus-5',
+  'anthropic/claude-sonnet-5',
+  'anthropic/claude-fable-5.1',
+  'openai/gpt-6-astra-pro',
+  'openai/gpt-6-astra',
   'openai/gpt-4o-mini',
   'google/gemini-3.8-flash',
+  'x-ai/grok-4.6',
+  'x-ai/grok-4.5',
   'x-ai/grok-4.20',
-  'anthropic/claude-fable-5.1',
+  'deepseek/deepseek-v4-pro-0813',
+  'deepseek/deepseek-v4.1-flash',
+  'qwen/qwen3.8-max-0902',
+  'qwen/qwen3.8-flash',
+  'z-ai/glm-5.3',
+  'meta-llama/llama-4-maverick',
+  'moonshotai/kimi-k2',
 ] as const;
 
 /** 上下文长度仅用于下拉里的选择提示，不参与任何逻辑。 */
@@ -43,10 +57,23 @@ export const MODEL_CONTEXT: Readonly<Record<string, string>> = {
   'nex-agi/nex-n2.5-mini:free': '262K',
   'google/gemma-4-31b-it:free': '262K',
   'google/gemma-4-26b-a4b-it:free': '262K',
+  'anthropic/claude-opus-5': '1M',
+  'anthropic/claude-sonnet-5': '1M',
+  'anthropic/claude-fable-5.1': '1M',
+  'openai/gpt-6-astra-pro': '1.05M',
+  'openai/gpt-6-astra': '1.05M',
   'openai/gpt-4o-mini': '128K',
   'google/gemini-3.8-flash': '1M',
+  'x-ai/grok-4.6': '500K',
+  'x-ai/grok-4.5': '500K',
   'x-ai/grok-4.20': '2M',
-  'anthropic/claude-fable-5.1': '1M',
+  'deepseek/deepseek-v4-pro-0813': '1M',
+  'deepseek/deepseek-v4.1-flash': '1M',
+  'qwen/qwen3.8-max-0902': '1M',
+  'qwen/qwen3.8-flash': '1M',
+  'z-ai/glm-5.3': '1.31M',
+  'meta-llama/llama-4-maverick': '1M',
+  'moonshotai/kimi-k2': '131K',
 };
 
 export const DEFAULT_MODEL = AGENT_MODELS[0];

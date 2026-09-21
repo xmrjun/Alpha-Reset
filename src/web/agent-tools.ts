@@ -48,6 +48,11 @@ const schemas = {
   }),
   query_coverage: z.strictObject({}),
   social_check: z.strictObject({ ca: contractAddress }),
+  alert_performance: z.strictObject({
+    from: z.number().int().nonnegative().optional(),
+    to: z.number().int().nonnegative().optional(),
+    limit,
+  }),
   diagnose: z.strictObject({}),
 } as const;
 
@@ -92,6 +97,15 @@ export const POOL_RESULT_NOTE =
 export const ALERTS_RESULT_NOTE =
   '这里的胜率与收益率是事后统计，不是预测，不得据此给出任何买卖、仓位或入场时机建议；'
   + 'controlSince 之前的轮次只有触发组、没有对照组，不能当作跑赢基准的证据。';
+
+/**
+ * 随 alert_performance 返回。价格变化不等于收益：没有入场价、没有滑点、没有手续费，
+ * 也没有仓位。模型很容易把「涨了 50%」说成「赚了 50%」。
+ */
+export const PERFORMANCE_RESULT_NOTE =
+  '这是告警时刻收盘价与最新收盘价的价格变化，不是收益率 —— 没有入场价、滑点、手续费和仓位；'
+  + 'priceAsOf 是最新价的时间，离现在太远说明该币已经没有新行情；'
+  + 'unavailable 的条目不能当作零涨跌。不得据此给出任何买卖建议。';
 
 /** 描述要写清「什么时候该调」，模型只能靠这段话判断。 */
 export const AGENT_TOOLS: readonly AgentToolDefinition[] = [
@@ -157,6 +171,25 @@ export const AGENT_TOOLS: readonly AgentToolDefinition[] = [
         ca: { type: 'string', description: '合约地址，从 query_pool 或 query_alerts 的结果里取' },
       },
       required: ['ca'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'alert_performance',
+    description: '对比一段时间内触发过告警的币：告警那一刻的收盘价，和该币最新的收盘价，'
+      + '算出至今的价格变化，并汇总涨了几个、跌了几个、几个算不出来。'
+      + '回答「9 月 20 号告警的币现在怎么样了」「上周推荐的哪些涨了哪些跌了」这类问题时使用。'
+      + 'from / to 是毫秒时间戳，不传则默认最近 7 天；同一个币在窗口内多次告警时按最早那次算。'
+      + '两端价格取自同一个行情序列，结果里的 source 说明是哪个源。'
+      + '重要：这是价格变化而不是收益率，没有入场价、滑点和手续费，不要说成「赚了多少」，'
+      + '也不要据此给出买卖建议。',
+    parameters: {
+      type: 'object',
+      properties: {
+        from: { type: 'integer', description: '起始时间，毫秒时间戳' },
+        to: { type: 'integer', description: '结束时间，毫秒时间戳' },
+        limit: { type: 'integer', minimum: 1, maximum: 50, description: '最多返回几个币，默认 20' },
+      },
       additionalProperties: false,
     },
   },
