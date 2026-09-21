@@ -20,6 +20,7 @@ import { canonicalCa } from '../addresses.js';
 import { XapiError } from '../api/xapi-twitter.js';
 import { XapiTwitterClient } from '../api/xapi-twitter.js';
 import { createAgentAuditStore } from '../store/agent-audit.js';
+import { createAlertSocialStore } from '../store/alert-social.js';
 import { SocialLookup } from './social-lookup.js';
 import { latestObservationRound, readRpsDisplay, verifiedDisplaySeries, verifiedCalculationSeries } from './rps-display.js';
 import { createWebReadModel, type WebReadContext } from './read-context.js';
@@ -54,6 +55,19 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   const clock = opts.now ?? Date.now;
   // 唯一会花钱的工具：没有 XAPI_KEY 就整个不可用，而不是退化成空结果。
   const xapiKey = process.env.XAPI_KEY;
+  const alertSocial = createAlertSocialStore(db);
+  /**
+   * 社交判定与事后收益的对照。
+   *
+   * 两张表以 (ca, 对齐到 15m 的 fired_at) 相连 —— alerts.fired_at 存的是评分时刻的
+   * 原始值，alert_outcomes.baseline_at 存的是对齐值，实践中相等，但按对齐值 join
+   * 才不会因为将来某次改动而悄悄对不上。
+   */
+  const socialVsOutcome = db.prepare(`SELECT s.verdict, o.return_pct AS returnPct
+    FROM alert_social s JOIN alert_outcomes o
+      ON o.ca = s.ca AND o.baseline_at = (s.fired_at / 900000) * 900000 AND o.horizon_hours = 24
+    WHERE s.checked_at IS NOT NULL AND o.return_pct IS NOT NULL`);
+
   // 告警至今的价格变化：两端都从同一个活跃序列取，跨源拼接出来的涨跌幅是假的。
   const alertsInWindow = db.prepare(`SELECT ca, MIN(fired_at) AS firedAt,
     GROUP_CONCAT(DISTINCT tag) AS tags FROM alerts WHERE fired_at >= ? AND fired_at < ?
@@ -335,6 +349,25 @@ export function createWebServer(opts: { db: StoreDatabase; cfg: StrategyConfig; 
       const now = clock();
       if (url.pathname === '/api/agent/tools') {
         send(200, { tools: AGENT_TOOLS }); return;
+      }
+      if (url.pathname === '/api/social') {
+        const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
+        const rows = socialVsOutcome.all() as { verdict: string; returnPct: number }[];
+        const byVerdict = new Map<string, number[]>();
+        for (const row of rows) {
+          const bucket = byVerdict.get(row.verdict) ?? [];
+          bucket.push(row.returnPct);
+          byVerdict.set(row.verdict, bucket);
+        }
+        const comparison = [...byVerdict.entries()].map(([verdict, values]) => {
+          const sorted = [...values].sort((a, b) => a - b);
+          const mid = Math.floor(sorted.length / 2);
+          return { verdict, n: sorted.length,
+            medianReturnPct: sorted.length === 0 ? null
+              : sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]! };
+        }).sort((a, b) => b.n - a.n);
+        send(200, { summary: alertSocial.summary(0), comparison, items: alertSocial.recent(limit) });
+        return;
       }
       if (url.pathname === '/api/stats') {
         send(200, db.transaction(() => statsAt(now))()); return;

@@ -296,6 +296,20 @@ const zh = {
     + '你是数据助手，不提供营销建议，不建议用户去增加曝光、找账号转发或炒热度。'
     + '告警历史里的胜率与收益率是事后统计而非预测，'
     + '不得据此给出买入、卖出、仓位或入场时机的建议。',
+  navSocial: '社交面',
+  socialLoading: '正在读取判定记录…',
+  socialEyebrow: '告警时的社交热度',
+  socialTitle: '社交面判定',
+  socialLead: '每条告警发出后两分钟，自动查一次这个合约在 X 上的讨论，判断热度是真的还是买来的。提及数是反向指标——刷量占比高说明有人在花钱做量。',
+  socialChecked: '已判定', socialManufactured: '刷量为主', socialMixed: '真假混杂',
+  socialOrganic: '有机讨论', socialQuiet: '无人讨论',
+  socialComparisonTitle: '判定与事后收益的对照',
+  socialComparisonLead: '按 24 小时事后收益中位数分组。样本还少时不要当结论看——这张表要攒够量才有意义。',
+  socialColVerdict: '判定', socialColSamples: '样本数', socialColMedian: '收益中位数',
+  socialColToken: '代币', socialColFired: '告警时间', socialColMentions: '提及',
+  socialColBot: '刷量占比', socialColViews: '浏览中位数', socialColKol: '真实大V',
+  socialEmpty: '还没有判定记录。新告警出现两分钟后会自动查。',
+  socialPending: (n: number) => `${n} 条排队中`,
   agentEmptyTitle: '试试这些问题，点一下就问',
   agentExamples: [
     '今天为什么没有出告警？',
@@ -607,6 +621,20 @@ const en: Copy = {
     + 'You are a data assistant: give no marketing advice, and never suggest boosting exposure, finding accounts to repost, or building hype. '
     + 'Win rates and returns in the alert history are after-the-fact statistics, not predictions; '
     + 'never turn them into buy, sell, sizing, or entry-timing advice.',
+  navSocial: 'Social',
+  socialLoading: 'Loading verdicts…',
+  socialEyebrow: 'Social proof at alert time',
+  socialTitle: 'Social verdicts',
+  socialLead: 'Two minutes after each alert fires, the chatter about that contract on X is checked automatically. Mention volume is an inverse indicator — a high count usually means someone is paying for it.',
+  socialChecked: 'checked', socialManufactured: 'manufactured', socialMixed: 'mixed',
+  socialOrganic: 'organic', socialQuiet: 'quiet',
+  socialComparisonTitle: 'Verdict against what happened next',
+  socialComparisonLead: 'Median 24h post-alert return per verdict. Do not read it as a conclusion while the sample is small — this table only means something once it has volume.',
+  socialColVerdict: 'Verdict', socialColSamples: 'Samples', socialColMedian: 'Median return',
+  socialColToken: 'Token', socialColFired: 'Alerted', socialColMentions: 'Mentions',
+  socialColBot: 'Manufactured', socialColViews: 'Median views', socialColKol: 'Real KOLs',
+  socialEmpty: 'No verdicts yet. Each new alert is checked two minutes after it fires.',
+  socialPending: (n: number) => `${n} queued`,
   agentEmptyTitle: 'Try one of these — click to ask',
   agentExamples: [
     'Why has nothing alerted today?',

@@ -22,7 +22,10 @@ import { createCandleStore } from '../store/candles.js';
 import { openDatabase, type StoreDatabase } from '../store/db.js';
 import { createMomentStore } from '../store/moments.js';
 import { createSeriesStore, isSupportedMarketSeries, MARKET_SERIES_FORMAT_VERSION, MarketSeriesError, TOKEN_SOURCES, type MarketSeries, type TokenSource } from '../store/series.js';
+import { createAlertSocialStore } from '../store/alert-social.js';
 import { createOutcomeStore } from '../store/outcomes.js';
+import { assessSocial } from '../indicators/social-quality.js';
+import { XapiTwitterClient } from '../api/xapi-twitter.js';
 import { createPoolStore } from '../store/pool.js';
 import { createRuntimeStore, initialRound, pendingMember, RuntimeStateError, strategyKey, type RoundMember, type RoundSnapshot } from '../store/runtime.js';
 import { readRoundInputs } from '../store/snapshot.js';
@@ -121,6 +124,7 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   const moments = createMomentStore(db);
   const series = createSeriesStore(db);
   const outcomes = createOutcomeStore(db);
+  const alertSocial = createAlertSocialStore(db);
   const log = opts.log ?? ((event) => console.log(JSON.stringify(event)));
   let currentNow = 0;
   const clock = () => opts.clock?.() ?? currentNow;
@@ -839,6 +843,15 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
       // 发布后才异步通知。采集可继续写库；通知始终使用上面冻结的 T 和规则输入。
       for (const notification of notifications) {
         if (stopping) break;
+        // 只排队，不查。查一次推特要 3~20 秒，挂在这条路径上会让每条告警都晚这么久。
+        // 只排真正触发了标签的：notifications 装的是全部评分成员，notify 内部才按
+        // tags 和冷却过滤，无条件排队会把整个观察池两百多个币都排进去。
+        if (notification.tags.length) {
+          try {
+            alertSocial.queue({ ca: notification.ca, firedAt: notification.now,
+              symbol: notification.pool.symbol ?? null, chain: notification.pool.chain ?? null }, clock());
+          } catch { /* 排队失败不该影响告警推送 */ }
+        }
         try { await notifier.notify(notification); }
         catch (error) {
           computed.failures++;
@@ -866,6 +879,33 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
   }
 
   /** 结算到期的事后收益：退出价必须取自登记时的同一条序列，缺失则记为无结果而非换源。 */
+  /**
+   * 消化社交面待查队列。每轮只取两条：上游单次最长 25 秒，取多了会把主循环拖住。
+   * 失败计数加一留待下轮，连续三次放弃 —— 有些币就是永远查不到东西。
+   */
+  async function settleSocial(now = opts.clock?.() ?? Date.now()): Promise<number> {
+    const apiKey = process.env.XAPI_KEY;
+    if (!apiKey) return 0;
+    const date = new Date(now);
+    const dayStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+    const batch = alertSocial.pending(now, dayStart,
+      { delayMs: 2 * MINUTE_MS, cooldownMs: 6 * HOUR_MS, dailyLimit: 200, limit: 2 });
+    if (!batch.length) return 0;
+    const client = new XapiTwitterClient({ apiKey });
+    let done = 0;
+    for (const row of batch) {
+      if (stopping) break;
+      try {
+        const { posts } = await client.searchMentions(row.ca);
+        alertSocial.record(row.ca, row.firedAt, assessSocial(posts), opts.clock?.() ?? Date.now());
+        done += 1;
+      } catch {
+        alertSocial.fail(row.ca, row.firedAt, opts.clock?.() ?? Date.now());
+      }
+    }
+    return done;
+  }
+
   function settleOutcomes(now = opts.clock?.() ?? Date.now()): number {
     let settled = 0;
     for (const row of outcomes.pending(now)) {
@@ -903,7 +943,29 @@ export function createScheduler(opts: { db: StoreDatabase; cfg: StrategyConfig; 
       return await calculate(now, true) ?? report;
     } finally { combinedRunning = false; }
   }
-  return { runOnce, collectOnce, discoverOnce, collectKnownPoolOnce, calculateAt, settleOutcomes, stop: () => { stopping = true; } };
+  return { runOnce, collectOnce, discoverOnce, collectKnownPoolOnce, calculateAt, settleOutcomes, settleSocial,
+    stop: () => { stopping = true; } };
+}
+
+/**
+ * 社交面查询用自己的节奏，不挂在主循环上。
+ *
+ * 主循环是 30 分钟一轮，每轮只处理两条的话积压要几十小时才化得开；而它本身又不能
+ * 一轮处理太多 —— 上游单次最长 25 秒，会把采集挤掉。所以单独起一个 30 秒的节拍，
+ * 用 running 标志防重入，关闭时清掉。
+ */
+function startSocialLoop(settle: (now: number) => Promise<number>): () => void {
+  let running = false;
+  const timer = setInterval(() => {
+    if (running) return;
+    running = true;
+    void settle(Date.now())
+      .then((n) => { if (n) console.log(JSON.stringify({ event: 'social_checked', count: n })); })
+      .catch(() => console.error('社交面查询失败'))
+      .finally(() => { running = false; });
+  }, 30_000);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 async function main() {
@@ -937,6 +999,8 @@ async function main() {
     client: new BinanceWeb3Client({ apiKey: xapiKey!, requestsPerMinute: cfg.kline.binance.requestsPerMinute }),
     clock: Date.now }) : null;
   if (cfg.kline.binance.enabled && !binanceConfigured) console.error('XAPI_KEY 未配置或格式无效，已暂停 Binance Web3 采集');
+  // 社交面查询自己走一条 30 秒的节拍，不跟主循环抢时间。
+  const stopSocialLoop = binanceConfigured ? startSocialLoop((now) => scheduler.settleSocial(now)) : () => {};
   const interval = cfg.schedule.mainLoopMinutes * MINUTE_MS;
   const baseline = () => Math.floor(Date.now() / interval) * interval;
   let lastSlot = -1;
@@ -1033,7 +1097,7 @@ async function main() {
     log: (event) => console.log(JSON.stringify(event)) }) : Promise.resolve();
   const shutdown = async () => {
     if (closing) return;
-    closing = true; scheduler.stop(); gmgnCollector?.stop(); binanceCollector?.stop();
+    closing = true; scheduler.stop(); gmgnCollector?.stop(); binanceCollector?.stop(); stopSocialLoop();
     wakeCollector?.(); wakeGmgn?.(); wakeBinance?.();
     const finishingCalculation = coordinator.stop();
     await task.destroy(); await collector; await gmgnCollection; await binanceCollection;

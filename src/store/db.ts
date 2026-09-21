@@ -273,6 +273,28 @@ export function openDatabase(filename = 'data/alpha-reset.sqlite'): StoreDatabas
     );
     CREATE INDEX IF NOT EXISTS idx_series_switches_asset ON market_series_switches(network, ca, switched_at);`);
 
+    // 告警发生时的社交面判定。与 alert_outcomes 以 (ca, fired_at) 对齐，
+    // 好让「刷量的币事后表现是否更差」成为一个可以直接 join 出来的问题。
+    db.exec(`CREATE TABLE IF NOT EXISTS alert_social (
+      ca TEXT NOT NULL,
+      fired_at INTEGER NOT NULL,
+      symbol TEXT,
+      chain TEXT,
+      queued_at INTEGER NOT NULL,
+      checked_at INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      total INTEGER,
+      manufactured INTEGER,
+      bot_ratio REAL,
+      clusters INTEGER,
+      median_views REAL,
+      kols TEXT,
+      verdict TEXT,
+      PRIMARY KEY (ca, fired_at)
+    );
+    CREATE INDEX IF NOT EXISTS idx_alert_social_pending ON alert_social(checked_at, queued_at);
+    CREATE INDEX IF NOT EXISTS idx_alert_social_done ON alert_social(ca, checked_at);`);
+
     // agent 工具调用的证据链。与上面那张表一样用 IF NOT EXISTS 无条件建 ——
     // 放进版本化迁移块的话，已经是 version 7 的线上库永远不会执行到。
     db.exec(`CREATE TABLE IF NOT EXISTS agent_tool_calls (

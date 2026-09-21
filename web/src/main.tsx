@@ -250,6 +250,74 @@ function Detail({ ca, theme }: { ca: string; theme: string }) {
   </>;
 }
 
+interface SocialRow {
+  ca: string; firedAt: number; symbol: string | null; chain: string | null;
+  total: number | null; manufactured: number | null; botRatio: number | null;
+  medianViews: number | null; kols: string[]; verdict: string | null;
+}
+interface SocialResponse {
+  summary: { checked: number; manufactured: number; mixed: number; organic: number; quiet: number };
+  comparison: { verdict: string; n: number; medianReturnPct: number | null }[];
+  items: SocialRow[];
+}
+
+function SocialBoard() {
+  const { t } = useCopy();
+  const api = useApi<SocialResponse>('/api/social?limit=100');
+  const label = (verdict: string | null): string =>
+    verdict === 'manufactured' ? t.socialManufactured : verdict === 'mixed' ? t.socialMixed
+      : verdict === 'organic' ? t.socialOrganic : t.socialQuiet;
+
+  return <><div className="page-heading">
+    <div><p className="eyebrow">{t.socialEyebrow}</p><h1>{t.socialTitle}</h1><p>{t.socialLead}</p></div>
+    <button onClick={api.reload}>{t.reload}</button></div>
+    <ErrorBox message={api.error} retry={api.reload} />
+
+    {api.data && <section className="panel social-summary">
+      {([['checked', t.socialChecked], ['manufactured', t.socialManufactured],
+         ['mixed', t.socialMixed], ['organic', t.socialOrganic], ['quiet', t.socialQuiet]] as const)
+        .map(([key, text]) => <div className="social-stat" key={key}>
+          <span className="social-stat-value">{api.data!.summary[key as keyof SocialResponse['summary']]}</span>
+          <span className="social-stat-label">{text}</span>
+        </div>)}
+    </section>}
+
+    {api.data && api.data.comparison.length > 0 && <>
+      <div className="section-heading"><h2>{t.socialComparisonTitle}</h2></div>
+      <section className="panel"><p className="agent-privacy">{t.socialComparisonLead}</p>
+        <table className="social-table"><thead><tr>
+          <th>{t.socialColVerdict}</th><th>{t.socialColSamples}</th><th>{t.socialColMedian}</th>
+        </tr></thead><tbody>
+          {api.data.comparison.map((row) => <tr key={row.verdict}>
+            <td>{label(row.verdict)}</td><td>{row.n}</td>
+            <td className={row.medianReturnPct === null ? '' : row.medianReturnPct >= 0 ? 'gain' : 'loss'}>
+              {row.medianReturnPct === null ? '—' : `${row.medianReturnPct >= 0 ? '+' : ''}${row.medianReturnPct.toFixed(1)}%`}</td>
+          </tr>)}
+        </tbody></table></section>
+    </>}
+
+    <div className="section-heading"><h2>{t.socialTitle}</h2></div>
+    {api.loading ? <div className="loading" role="status">{t.socialLoading}</div>
+      : api.data && api.data.items.length > 0
+        ? <section className="panel"><div className="table-wrap"><table className="social-table"><thead><tr>
+            <th>{t.socialColToken}</th><th>{t.socialColFired}</th><th>{t.socialColMentions}</th>
+            <th>{t.socialColBot}</th><th>{t.socialColViews}</th><th>{t.socialColVerdict}</th><th>{t.socialColKol}</th>
+          </tr></thead><tbody>
+            {api.data.items.map((row) => <tr key={`${row.ca}-${row.firedAt}`}>
+              <td><a className="symbol-link" href={`/ca/${encodeURIComponent(row.ca)}`}>{row.symbol || row.ca.slice(0, 8)}</a></td>
+              <td>{new Date(row.firedAt).toISOString().slice(5, 16).replace('T', ' ')}</td>
+              <td>{row.total ?? '—'}</td>
+              <td className={(row.botRatio ?? 0) >= 0.6 ? 'loss' : ''}>
+                {row.botRatio === null ? '—' : `${Math.round(row.botRatio * 100)}%`}</td>
+              <td>{row.medianViews === null ? '—' : Math.round(row.medianViews)}</td>
+              <td>{label(row.verdict)}</td>
+              <td>{row.kols.length ? row.kols.join(', ') : '—'}</td>
+            </tr>)}
+          </tbody></table></div></section>
+        : <Empty title={t.socialTitle} description={t.socialEmpty} />}
+  </>;
+}
+
 function App() {
   const [theme, setTheme] = useState(initialTheme);
   const [lang, setLangState] = useState<Lang>(detectLang);
@@ -268,12 +336,12 @@ function App() {
   if (path.startsWith('/ca/')) { try { ca = decodeURIComponent(path.slice(4)); } catch { /* 显示未找到 */ } }
   return <LangContext.Provider value={{ lang, t, setLang }}>
     <header className="site-header"><a className="brand" href="/" aria-label={t.brandHome}><span className="brand-icon">α</span><span>ALPHA<span className="brand-light"> / RESET</span></span></a>
-    <nav aria-label={t.navMain}><a href="/" aria-current={path === '/' || ca !== null ? 'page' : undefined}>{t.navOverview}</a><a href="/alerts" aria-current={path === '/alerts' ? 'page' : undefined}>{t.navAlerts}</a><a href="/chat" aria-current={path === '/chat' ? 'page' : undefined}>{t.navChat}</a></nav>
+    <nav aria-label={t.navMain}><a href="/" aria-current={path === '/' || ca !== null ? 'page' : undefined}>{t.navOverview}</a><a href="/alerts" aria-current={path === '/alerts' ? 'page' : undefined}>{t.navAlerts}</a><a href="/social" aria-current={path === '/social' ? 'page' : undefined}>{t.navSocial}</a><a href="/chat" aria-current={path === '/chat' ? 'page' : undefined}>{t.navChat}</a></nav>
     <div className="header-actions"><span className="local-label">{t.localBadge}</span>
       <button aria-label={t.langToggleLabel} onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}>{t.langToggle}</button>
       <button aria-label={t.themeLabel} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? t.themeDark : t.themeLight}</button></div></header>
     <main><ErrorBox message={stats.error} retry={stats.reload} />{path === '/' ? <Overview stats={stats.data} /> : path === '/alerts' ? <AlertHistory />
-      : path === '/chat' ? <AgentPanel standalone /> : ca ? <Detail ca={ca} theme={theme} />
+      : path === '/social' ? <SocialBoard /> : path === '/chat' ? <AgentPanel standalone /> : ca ? <Detail ca={ca} theme={theme} />
       : <Empty title={t.notFoundTitle} description={t.notFoundDesc} />}</main>
     <footer><span>ALPHA / RESET</span><span>{t.footerTagline}</span><span>{t.footerSources((stats.data?.dataQuality.enabledSources ?? ['geckoterminal']).map((source) => source === 'gmgn' ? 'GMGN' : source === 'binance' ? 'Binance Web3' : 'GeckoTerminal').join(' / '))}</span></footer>
   </LangContext.Provider>;

@@ -255,6 +255,13 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
   gap: 12px;
   align-content: start;
 }
+.social-summary { display: flex; flex-wrap: wrap; gap: 26px; padding: 18px 22px; }
+.social-stat { display: flex; flex-direction: column; gap: 2px; }
+.social-stat-value { font-size: 20px; font-weight: 600; color: var(--text-primary); }
+.social-stat-label { font-size: 10px; color: var(--text-muted); }
+.social-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.social-table th, .social-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+.social-table th { color: var(--text-muted); font-weight: 500; }
 .agent-table-wrap { overflow-x: auto; margin: 6px 0; }
 .agent-md-table { border-collapse: collapse; font-size: 10.5px; white-space: nowrap; }
 .agent-md-table th, .agent-md-table td { padding: 4px 9px; border: 1px solid var(--border); text-align: left; }
