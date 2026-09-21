@@ -34,18 +34,20 @@ Each tool declares a JSON Schema with `additionalProperties: false` and passes a
 
 ### `$ORBIO` is also monitored
 
-`$ORBIO` trades on **Robinhood Chain**, which is the **largest chain in this system's watchlist — 72 of 221 tokens (32%)**. Supporting it is why the market-data source was migrated in the first place (the original provider has no Robinhood Chain candles at all).
+`$ORBIO` trades on **Robinhood Chain**, one of the three chains this system watches most (44 of 210 tokens, 21%, behind BSC and Arc as of this writing). Supporting that chain is why the market-data source was migrated in the first place — the original provider has no Robinhood Chain candles at all.
 
-`$ORBIO` is monitored not as a demo but because someone mentioned it in one of the three watched groups:
+`$ORBIO` is monitored not as a demo but because it was mentioned in the watched groups:
 
 **→ <https://alpha.nbmrjun.top/ca/0xaa07a0e9209e16ac99708c3ec70159c6ef3128a3>**
 
 | | |
 |---|---|
 | Chain | robinhood |
-| A1 (age) / A2 (size) | pass / pass — market cap $28.0M, liquidity $750K, both inside the configured band |
-| Accumulated candles | 1,396 × 15m from Binance Web3, the current scoring source; its GMGN series holds 1,934 bars — the deepest single series in the system |
-| How it entered the pool | mentioned in one of the three observed groups |
+| A1 (age) / A2 (size) | pass / **fail** — market cap has run to $85.5M, past the configured $40M ceiling, so A2 no longer holds |
+| Accumulated candles | 1,863 × 15m from Binance Web3, the current scoring source; its GMGN series holds 2,171 bars — the deepest single series in the system |
+| How it entered the pool | mentioned in two of the three observed groups |
+
+That A2 failure is worth leaving in. The rules do not get relaxed for the host's own token: it grew past the size band this strategy targets, so the system stops alerting on it and says why.
 
 ## What it does
 
@@ -53,7 +55,8 @@ Each tool declares a JSON Schema with `additionalProperties: false` and passes a
 2. **Collect** — continuously sweep the watchlist for 15m candles through three independent, rate-limited queues (Binance Web3 180 req/min, GMGN 30 req/min, GeckoTerminal 8 req/min), each with its own cooldown and fair-ordering that survives restarts.
 3. **Score** — on the hour, read one consistent snapshot out of local SQLite and evaluate the rules. No network call is inside the scoring transaction.
 4. **Alert** — deliver merged Telegram messages with per-tag cooldowns, and store the indicator snapshot taken at trigger time.
-5. **Ask** — optionally, bring your own Orbio key and interrogate all of the above in natural language, including whether the chatter around a token is real or bought.
+5. **Check the crowd** — two minutes after an alert fires, look up what X is saying about that contract and record whether the attention is organic or bought. Deliberately after the fact: the lookup takes 3–20 s and must never sit in the delivery path.
+6. **Ask** — optionally, bring your own Orbio key and interrogate all of the above in natural language.
 
 A token alerts only when **A1 ∧ A2 ∧ A3 ∧ A4** all hold: old enough, inside the size band, pulled back from a recorded high, and strong on relative-strength ranking.
 
@@ -99,13 +102,13 @@ The first thing this measurement did was contradict an impression. Over 94 histo
 
 Those numbers are **not yet actionable**: 17 assets, top three accounting for half the sample, three days, no exit rule, and — critically — the control group is empty for all historical rounds because the qualifying set per round was never persisted. The UI says so in place of the comparison rather than letting an empty control read as outperformance. Control data accrues from the moment the feature shipped.
 
-### 5. Social proof is measured as forgery, not as volume
+### 5. Social proof is measured as forgery, and then checked against what happened
 
 The obvious way to add a sentiment input is a "mentions" count. Measuring first killed that design.
 
 Sample: the 20 tweets mentioning a Solana token this system had just alerted on. Fifteen were one template with rotated emoji, pointing at `token-drop` / `meme-drops` / `memecoins-giveaway` / `solana-drops` — different netlify subdomains, same landing page. The posting accounts were registered 2010–2016 with 30k+ historical tweets and bios unrelated to crypto: rented or stolen real accounts, not fresh burners. Median view count was **76** — the platform had already classified the batch as spam and given it no distribution.
 
-Mention volume is therefore an **inverse** indicator: a high count means someone is paying for it, which usually precedes a dump. The tool reports the manufactured share, and its description says so explicitly, so the model does not answer "lots of mentions" as though it were bullish.
+Mention volume is therefore an **inverse** indicator: a high count means someone is paying for it, which usually precedes a dump.
 
 Detection is multi-signal scoring, threshold 3:
 
@@ -119,9 +122,11 @@ Detection is multi-signal scoring, threshold 3:
 
 **Text similarity alone was not enough.** Clustering by de-stopworded Jaccard at 0.45 failed to connect three posts from the same batch whose pairwise similarity was only 0.37 — the template has several wordings, not one. Union-find over *text similarity **or** shared landing-page domain* connects them: a spammer varies copy far more readily than the page being sold.
 
-Against the hand-labelled sample all 15 manufactured posts are caught and none of the 5 organic ones is flagged. On the day it shipped, two real alerts from the same session: one 80% manufactured, median 76 views, no real KOL; the other 10% manufactured, median 217 views, a genuine large account present. Same technical trigger, opposite social evidence. See [docs/19](docs/19-社交面质量.md).
+Against the hand-labelled sample all 15 manufactured posts are caught and none of the 5 organic ones is flagged. The separation holds on live data too — across the verdicts recorded so far, the median view count is **40 for `manufactured` and 446 for `organic`**, a factor of eleven. That number is not an input to the scoring; it is the platform's own distribution decision agreeing with it.
 
-This is the only tool that costs money — $0.0001 per query, capped at 2000/day globally and 50/day per visitor behind a 10-minute cache. Every limit is checked before the upstream request, so a refusal costs nothing.
+**The point is not to label alerts.** Every verdict is written next to `alert_outcomes`, keyed by the same `(ca, fired_at)`, so the honest question becomes a join: *do the tokens whose hype was bought actually do worse afterwards?* The `/social` board shows that comparison, and says plainly that it means nothing yet — with a dozen samples it flips sign every few hours. It will mean something in a few months, and if the answer is no, that is a result too.
+
+Cost is $0.0001 per lookup, throttled to one per token per six hours and 200 per day (about $0.02). See [docs/19](docs/19-社交面质量.md).
 
 ## Other properties
 
@@ -134,14 +139,15 @@ This is the only tool that costs money — $0.0001 per query, capped at 2000/day
 
 | | |
 |---|---|
-| Watchlist | 221 tokens across 7 chains |
-| Stored candles | 485,808 × 15m; deepest single series 1,934 bars |
-| Active series | 125 Binance Web3 (token) + 56 GeckoTerminal (pinned pool) + 21 GMGN (token) |
-| Historical contracts archived | 2,100 |
-| Alerts recorded / delivered | 381 / 142 |
-| Agent tools | 5 read-only, 1 of which reaches an external API |
-| Tests | 387 backend + 18 browser, all passing |
-| Source | ~9,400 lines of app code including the web UI, ~8,000 lines of tests |
+| Watchlist | 210 tokens; BSC, Arc and Robinhood Chain are the three largest |
+| Stored candles | 610,077 × 15m; deepest single series 2,171 bars |
+| Active series | 139 Binance Web3 (token) + 57 GeckoTerminal (pinned pool) |
+| Historical contracts archived | 2,207 |
+| Alerts recorded / delivered | 826 / 587 |
+| Social verdicts recorded | 26 so far — median views 40 for `manufactured`, 446 for `organic` |
+| Agent tools | 6 read-only, 1 of which reaches an external API |
+| Tests | 429 backend + 18 browser, all passing |
+| Source | ~10,200 lines of app code including the web UI, ~8,600 lines of tests |
 
 ## Stack
 
