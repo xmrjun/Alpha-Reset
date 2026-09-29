@@ -17,6 +17,8 @@ const RECENT_BARS = 280;
 const HISTORY_BARS = 280;
 const IDLE_POLL_MS = 60_000;
 const RETRY_MS = 30_000;
+/** 鉴权失败（含余额耗尽）后的复查间隔：到点只发一次探测，成功即解除。 */
+const AUTH_RETRY_MS = 30 * 60_000;
 const BOUNDARY_BUFFER_MS = 1_000;
 /** 连续多少次近期请求后，必须让一个到期的历史回补插队。 */
 const MAX_RECENT_BURST = 4;
@@ -110,6 +112,7 @@ export function createBinanceCollector(opts: {
   const select = db.prepare('SELECT payload FROM runtime_state WHERE key = ?');
   const put = db.prepare('INSERT INTO runtime_state (key,payload,updated_at) VALUES (?,?,?) '
     + 'ON CONFLICT(key) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at');
+  const dropAuthError = db.prepare("DELETE FROM runtime_state WHERE key = 'binance_auth_error'");
   let busy = false;
   let stopped = false;
 
@@ -296,7 +299,8 @@ export function createBinanceCollector(opts: {
           publish(state, current, 'disabled', now);
           return { attempted: false, nextAt: now + IDLE_POLL_MS, changed: false };
         }
-        if (read('binance_auth_error', authSchema)) {
+        const authLatch = read('binance_auth_error', authSchema);
+        if (authLatch && now < authLatch.at + AUTH_RETRY_MS) {
           publish(state, current, 'auth_error', now, 'BINANCE_AUTH');
           return { attempted: false, nextAt: now + IDLE_POLL_MS, changed: false };
         }
@@ -328,6 +332,7 @@ export function createBinanceCollector(opts: {
         attempted = true;
         const raw = await client.getCandles15m(task.member.network, task.member.ca, { from: task.from, to: task.to });
         if (stopped) return null;
+        dropAuthError.run();
         const receivedAt = clock();
         const { bars, exhausted } = checkedBars(raw, task, now, receivedAt);
         // 在途期间名单可能已更新，只读最新名单，不写回旧快照。

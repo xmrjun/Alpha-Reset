@@ -305,6 +305,62 @@ test('401/403持久暂停且普通重启不重试，清除独立auth状态后恢
   }
 });
 
+const GMGN_AUTH_RETRY = 30 * 60_000;
+const gmgnLatch = (f: ReturnType<typeof fixture>) => f.db
+  .prepare("SELECT payload FROM runtime_state WHERE key='gmgn_auth_error'").get() as { payload: string } | undefined;
+
+test('鉴权停摆在复查间隔内不发请求，间隔一到只发一次探测，成功即解除并恢复采集', async (t) => {
+  const f = fixture(t);
+  f.setHandler(async () => { throw new GmgnError('GMGN_HTTP', '固定说明', 401); });
+  await f.step();
+  assert.ok(gmgnLatch(f), '401 必须落下停摆标记');
+
+  const inside = await f.collector().collectOnce(T + GMGN_AUTH_RETRY - 1);
+  assert.equal(inside?.attempted, false, '复查间隔内不得请求');
+  assert.equal(f.calls.length, 1);
+
+  f.setHandler(async (request) => result(request));
+  f.setNow(T + GMGN_AUTH_RETRY);
+  const probe = await f.step();
+  assert.equal(probe?.attempted, true, '间隔一到应发探测请求');
+  assert.equal(f.calls.length, 2);
+  assert.equal(gmgnLatch(f), undefined, '探测成功必须清除停摆标记');
+  assert.equal(f.status().status, 'idle');
+  assert.equal(f.status().lastErrorCode, null);
+});
+
+test('探测仍是 401/403 时刷新停摆时间，下一个间隔之前不再请求', async (t) => {
+  for (const status of [401, 403]) {
+    const f = fixture(t);
+    f.setHandler(async () => { throw new GmgnError('GMGN_HTTP', '固定说明', status); });
+    await f.step();
+    f.setNow(T + GMGN_AUTH_RETRY);
+    await f.step();
+    assert.equal(f.calls.length, 2, '第一次探测');
+    assert.equal(f.status().status, 'auth_error');
+    assert.equal((JSON.parse(gmgnLatch(f)!.payload) as { at: number }).at, T + GMGN_AUTH_RETRY, '停摆时间应刷新为探测时刻');
+
+    const inside = await f.collector().collectOnce(T + 2 * GMGN_AUTH_RETRY - 1);
+    assert.equal(inside?.attempted, false, '刷新后的间隔内不得再请求');
+    assert.equal(f.calls.length, 2);
+
+    f.setNow(T + 2 * GMGN_AUTH_RETRY);
+    await f.step();
+    assert.equal(f.calls.length, 3, '下一个间隔到了再探测');
+  }
+});
+
+test('探测遇到非鉴权错误时不清除停摆标记', async (t) => {
+  const f = fixture(t);
+  f.setHandler(async () => { throw new GmgnError('GMGN_HTTP', '固定说明', 401); });
+  await f.step();
+  f.setHandler(async () => { throw new GmgnError('GMGN_NETWORK', '网络错误'); });
+  f.setNow(T + GMGN_AUTH_RETRY);
+  await f.step();
+  assert.equal(f.calls.length, 2);
+  assert.ok(gmgnLatch(f), '没有拿到成功响应就不能宣布鉴权已恢复');
+});
+
 test('来源、链、CA或OHLC错误不能入库，固定错误状态不泄露原始文本', async (t) => {
   for (const kind of ['provider', 'chain', 'ca', 'pool', 'bar', 'conflict', 'error']) {
     const f = fixture(t);

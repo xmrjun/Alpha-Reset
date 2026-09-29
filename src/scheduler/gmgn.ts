@@ -16,6 +16,8 @@ const RECENT_BARS = 100;
 const HISTORY_BARS = 96;
 const IDLE_POLL_MS = 60_000;
 const RETRY_MS = 30_000;
+/** 鉴权失败（含余额耗尽）后的复查间隔：到点只发一次探测，成功即解除。 */
+const AUTH_RETRY_MS = 30 * 60_000;
 const BOUNDARY_BUFFER_MS = 1_000;
 const MAX_RECENT_BURST = 4;
 const MAX_PRIMARY_RECENT_BURST = 4;
@@ -97,6 +99,7 @@ export function createGmgnCollector(opts: {
   const select = db.prepare('SELECT payload FROM runtime_state WHERE key = ?');
   const put = db.prepare('INSERT INTO runtime_state (key,payload,updated_at) VALUES (?,?,?) '
     + 'ON CONFLICT(key) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at');
+  const dropAuthError = db.prepare("DELETE FROM runtime_state WHERE key = 'gmgn_auth_error'");
   let busy = false;
   let stopped = false;
 
@@ -297,7 +300,8 @@ export function createGmgnCollector(opts: {
           publish(state, current, 'disabled', now);
           return { attempted: false, nextAt: now + IDLE_POLL_MS, changed: false };
         }
-        if (read('gmgn_auth_error', authSchema)) {
+        const authLatch = read('gmgn_auth_error', authSchema);
+        if (authLatch && now < authLatch.at + AUTH_RETRY_MS) {
           publish(state, current, 'auth_error', now, 'GMGN_AUTH');
           return { attempted: false, nextAt: now + IDLE_POLL_MS, changed: false };
         }
@@ -330,6 +334,7 @@ export function createGmgnCollector(opts: {
         attempted = true;
         const raw = await client.getCandles15m(task.member.chain, task.member.ca, { from: task.from, to: task.to });
         if (stopped) return null;
+        dropAuthError.run();
         const receivedAt = clock();
         const bars = checkedBars(raw, task, now, receivedAt);
         // 在途期间名单可能更新，只读取最新名单，不写回旧 observation/评分快照。

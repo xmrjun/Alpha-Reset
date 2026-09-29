@@ -214,6 +214,72 @@ test('鉴权失败后停摆并记录，不再消耗预算', async (t) => {
   assert.equal(f.calls.length, 1);
 });
 
+const AUTH_RETRY = 30 * 60_000;
+const binanceLatch = (f: ReturnType<typeof fixture>) => f.db
+  .prepare("SELECT payload FROM runtime_state WHERE key='binance_auth_error'").get() as { payload: string } | undefined;
+
+test('鉴权停摆在复查间隔内不发请求，间隔一到只发一次探测，成功即解除并恢复采集', async (t) => {
+  const f = fixture(t, [{ ca: ca(1) }]);
+  f.setHandler(async () => { throw new BinanceWeb3Error('BINANCE_AUTH', '余额耗尽', 401); });
+  await f.step();
+  assert.ok(binanceLatch(f), '401 必须落下停摆标记');
+
+  const inside = await f.collector().collectOnce(T + AUTH_RETRY - 1);
+  assert.equal(inside?.attempted, false, '复查间隔内不得请求');
+  assert.equal(f.calls.length, 1);
+
+  f.setHandler(async (request) => result(request));
+  f.setNow(T + AUTH_RETRY);
+  const probe = await f.step();
+  assert.equal(probe?.attempted, true, '间隔一到应发探测请求');
+  assert.equal(f.calls.length, 2);
+  assert.equal(binanceLatch(f), undefined, '探测成功必须清除停摆标记');
+  assert.equal(f.status().status, 'idle');
+  assert.equal(f.status().lastErrorCode, null);
+});
+
+test('探测仍是 401 时刷新停摆时间，下一个间隔之前不再请求', async (t) => {
+  const f = fixture(t, [{ ca: ca(1) }]);
+  f.setHandler(async () => { throw new BinanceWeb3Error('BINANCE_AUTH', '余额耗尽', 401); });
+  await f.step();
+  f.setNow(T + AUTH_RETRY);
+  await f.step();
+  assert.equal(f.calls.length, 2, '第一次探测');
+  assert.equal(f.status().status, 'auth_error');
+  assert.equal((JSON.parse(binanceLatch(f)!.payload) as { at: number }).at, T + AUTH_RETRY, '停摆时间应刷新为探测时刻');
+
+  const inside = await f.collector().collectOnce(T + 2 * AUTH_RETRY - 1);
+  assert.equal(inside?.attempted, false, '刷新后的间隔内不得再请求');
+  assert.equal(f.calls.length, 2);
+
+  f.setNow(T + 2 * AUTH_RETRY);
+  await f.step();
+  assert.equal(f.calls.length, 3, '下一个间隔到了再探测');
+});
+
+test('探测遇到非鉴权错误时不清除停摆标记', async (t) => {
+  const f = fixture(t, [{ ca: ca(1) }]);
+  f.setHandler(async () => { throw new BinanceWeb3Error('BINANCE_AUTH', '余额耗尽', 401); });
+  await f.step();
+  f.setHandler(async () => { throw new BinanceWeb3Error('BINANCE_NETWORK', '网络错误'); });
+  f.setNow(T + AUTH_RETRY);
+  await f.step();
+  assert.equal(f.calls.length, 2);
+  assert.ok(binanceLatch(f), '没有拿到成功响应就不能宣布鉴权已恢复');
+});
+
+test('成功响应但内容校验不通过，也说明凭据已恢复，应清除停摆标记', async (t) => {
+  const f = fixture(t, [{ ca: ca(1) }]);
+  f.setHandler(async () => { throw new BinanceWeb3Error('BINANCE_AUTH', '余额耗尽', 401); });
+  await f.step();
+  f.setHandler(async (request) => ({ ...result(request),
+    source: { provider: 'binance', scope: 'token', chain: 'bsc', ca: request.ca, currency: 'usd', pool: null } }));
+  f.setNow(T + AUTH_RETRY);
+  await f.step();
+  assert.equal(f.calls.length, 2);
+  assert.equal(binanceLatch(f), undefined, '上游已正常应答，鉴权不再是问题');
+});
+
 test('响应身份与请求不符时拒绝写入候选序列', async (t) => {
   const f = fixture(t, [{ ca: ca(1) }]);
   f.setHandler(async (request) => ({ ...result(request),
