@@ -72,7 +72,7 @@ const barSchema = z.object({
 const resultSchema = z.object({ source: z.object({ provider: z.literal('gmgn'), scope: z.literal('token'),
   chain: z.string(), ca: z.string(), currency: z.literal('usd'), pool: z.null() }), candles: z.array(barSchema) });
 const cooldownSchema = z.object({ until: stamp });
-const authSchema = z.object({ httpStatus: z.union([z.literal(401), z.literal(403)]), at: stamp });
+const authSchema = z.object({ httpStatus: z.union([z.literal(401), z.literal(403)]), at: stamp, since: stamp.optional() });
 function assetKey(network: string, ca: string): string { return JSON.stringify([network, canonicalCa(ca)]); }
 function initialState(): State {
   return { version: 1, sequence: 0, nextAt: 0, requests: 0, recentRequests: 0, historyRequests: 0, recentBurst: 0, primaryRecentBurst: 0, assets: [] };
@@ -378,7 +378,8 @@ export function createGmgnCollector(opts: {
         let status: GmgnCollectionStatus['status'] = 'idle';
         let nextAt = at + gapMs;
         if (error instanceof GmgnError && (error.httpStatus === 401 || error.httpStatus === 403)) {
-          write('gmgn_auth_error', { httpStatus: error.httpStatus, at }, at);
+          const prior = read('gmgn_auth_error', authSchema);
+          write('gmgn_auth_error', { httpStatus: error.httpStatus, at, since: prior?.since ?? prior?.at ?? at }, at);
           status = 'auth_error'; nextAt = at + IDLE_POLL_MS;
         } else if (error instanceof GmgnError && (error.code === 'GMGN_RATE_LIMIT' || error.httpStatus === 429)) {
           const until = error.retryAt !== undefined && Number.isSafeInteger(error.retryAt) && error.retryAt > at

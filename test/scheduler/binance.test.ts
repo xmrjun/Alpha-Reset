@@ -257,6 +257,17 @@ test('探测仍是 401 时刷新停摆时间，下一个间隔之前不再请求
   assert.equal(f.calls.length, 3, '下一个间隔到了再探测');
 });
 
+test('停摆标记记录首次失败时间，反复探测失败也不改写它', async (t) => {
+  const f = fixture(t, [{ ca: ca(1) }]);
+  f.setHandler(async () => { throw new BinanceWeb3Error('BINANCE_AUTH', '余额耗尽', 401); });
+  await f.step();
+  f.setNow(T + AUTH_RETRY);
+  await f.step();
+  const latch = JSON.parse(binanceLatch(f)!.payload) as { at: number; since: number };
+  assert.equal(latch.at, T + AUTH_RETRY);
+  assert.equal(latch.since, T, 'since 必须停在第一次失败的时刻，供运维告警判断已断多久');
+});
+
 test('探测遇到非鉴权错误时不清除停摆标记', async (t) => {
   const f = fixture(t, [{ ca: ca(1) }]);
   f.setHandler(async () => { throw new BinanceWeb3Error('BINANCE_AUTH', '余额耗尽', 401); });

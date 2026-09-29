@@ -33,6 +33,7 @@ import type { BoardPoolItem, DexSnapshot, Range } from '../types.js';
 import { createQuotaGuard, QuotaStopError } from './quota.js';
 import { createGmgnCollector } from './gmgn.js';
 import { createBinanceCollector } from './binance.js';
+import { createAuthWatch } from './auth-watch.js';
 import { gmgnReadiness, type SeriesHistory } from './gmgn-readiness.js';
 import { createCalculationCoordinator } from './calculation-coordinator.js';
 
@@ -1095,9 +1096,12 @@ async function main() {
     // 节奏交给采集器自己的限速预算，循环不再额外压一层 1 秒地板。
     minGapMs: Math.max(1, Math.ceil(60_000 / cfg.kline.binance.requestsPerMinute)),
     log: (event) => console.log(JSON.stringify(event)) }) : Promise.resolve();
+  // 数据源鉴权停摆（多半是 API 余额耗尽）时通知运维，自动复查解决不了充值。
+  const authWatch = createAuthWatch({ db, alert: (text) => telegram.send(text) });
+  const authWatchTimer = setInterval(() => { void authWatch.check(Date.now()); }, MINUTE_MS);
   const shutdown = async () => {
     if (closing) return;
-    closing = true; scheduler.stop(); gmgnCollector?.stop(); binanceCollector?.stop(); stopSocialLoop();
+    closing = true; clearInterval(authWatchTimer); scheduler.stop(); gmgnCollector?.stop(); binanceCollector?.stop(); stopSocialLoop();
     wakeCollector?.(); wakeGmgn?.(); wakeBinance?.();
     const finishingCalculation = coordinator.stop();
     await task.destroy(); await collector; await gmgnCollection; await binanceCollection;

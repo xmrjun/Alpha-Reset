@@ -77,7 +77,7 @@ const resultSchema = z.object({
   exhausted: z.boolean(),
 });
 const cooldownSchema = z.object({ until: stamp });
-const authSchema = z.object({ httpStatus: z.union([z.literal(401), z.literal(403)]), at: stamp });
+const authSchema = z.object({ httpStatus: z.union([z.literal(401), z.literal(403)]), at: stamp, since: stamp.optional() });
 
 function assetKey(network: string, ca: string): string { return JSON.stringify([network, canonicalCa(ca)]); }
 function initialState(): State {
@@ -376,7 +376,8 @@ export function createBinanceCollector(opts: {
         let status: BinanceCollectionStatus['status'] = 'idle';
         let nextAt = at + gapMs;
         if (error instanceof BinanceWeb3Error && (error.httpStatus === 401 || error.httpStatus === 403)) {
-          write('binance_auth_error', { httpStatus: error.httpStatus, at }, at);
+          const prior = read('binance_auth_error', authSchema);
+          write('binance_auth_error', { httpStatus: error.httpStatus, at, since: prior?.since ?? prior?.at ?? at }, at);
           status = 'auth_error'; nextAt = at + IDLE_POLL_MS;
         } else if (error instanceof BinanceWeb3Error && (error.code === 'BINANCE_RATE_LIMIT' || error.httpStatus === 429)) {
           const until = error.retryAt !== undefined && Number.isSafeInteger(error.retryAt) && error.retryAt > at

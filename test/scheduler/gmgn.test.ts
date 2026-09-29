@@ -350,6 +350,17 @@ test('探测仍是 401/403 时刷新停摆时间，下一个间隔之前不再�
   }
 });
 
+test('停摆标记记录首次失败时间，反复探测失败也不改写它', async (t) => {
+  const f = fixture(t);
+  f.setHandler(async () => { throw new GmgnError('GMGN_HTTP', '固定说明', 401); });
+  await f.step();
+  f.setNow(T + GMGN_AUTH_RETRY);
+  await f.step();
+  const latch = JSON.parse(gmgnLatch(f)!.payload) as { at: number; since: number };
+  assert.equal(latch.at, T + GMGN_AUTH_RETRY);
+  assert.equal(latch.since, T, 'since 必须停在第一次失败的时刻，供运维告警判断已断多久');
+});
+
 test('探测遇到非鉴权错误时不清除停摆标记', async (t) => {
   const f = fixture(t);
   f.setHandler(async () => { throw new GmgnError('GMGN_HTTP', '固定说明', 401); });
